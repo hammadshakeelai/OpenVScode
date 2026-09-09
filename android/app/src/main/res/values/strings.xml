@@ -1,9 +1,14 @@
 <resources>
     <string name="app_name">OpenVScode</string>
-    <string name="server_starting">Starting OpenVScode IDE\u2026</string>
-    <string name="server_loading_sub">Initializing Python, C++ (Clang), and Jupyter environment</string>
-    <string name="service_running_title">OpenVScode IDE Active</string>
-    <string name="service_running_desc">Python, C++, and Jupyter server running in background</string>
-    <string name="action_stop">Stop Server</string>
+    <string name="server_starting">Connecting to IDE Server\u2026</string>
+    <string name="server_loading_sub">Attempting connection to %1$s</string>
+    <string name="server_not_found_title">Cannot Reach IDE Server</string>
+    <string name="server_not_found_desc">Nothing responded at %1$s.\n(%2$s)\n\nPlease start code-server in Termux (./start.sh) or enter a reachable LAN server IP below.</string>
+    <string name="service_running_title">OpenVScode IDE Connected</string>
+    <string name="service_running_desc">Server session active with background wake lock</string>
+    <string name="action_stop">Stop Session</string>
     <string name="retry">Retry Connection</string>
+    <string name="server_url_hint">http://127.0.0.1:8080</string>
+    <string name="btn_save_connect">Connect</string>
+    <string name="server_settings">Server Address</string>
 </resources>

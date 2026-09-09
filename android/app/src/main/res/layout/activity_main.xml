@@ -60,6 +60,7 @@
             android:contentDescription="@string/app_name" />
 
         <ProgressBar
+            android:id="@+id/progressBar"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginTop="32dp"
@@ -83,16 +84,54 @@
             android:text="@string/server_loading_sub"
             android:textColor="@color/key_btn_text"
             android:textSize="13sp"
-            android:gravity="center" />
+            android:gravity="center"
+            android:lineSpacingMultiplier="1.2" />
 
-        <Button
-            android:id="@+id/btnRetry"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:id="@+id/serverConfigContainer"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/retry"
-            android:visibility="gone"
-            android:backgroundTint="@color/accent_blue" />
+            android:layout_marginTop="20dp"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/editServerUrl"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:background="@color/input_bg"
+                android:textColor="@color/white"
+                android:textColorHint="@color/text_hint"
+                android:hint="@string/server_url_hint"
+                android:textSize="14sp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:inputType="textUri"
+                android:singleLine="true" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnConnect"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/btn_save_connect"
+                    android:backgroundTint="@color/accent_blue"
+                    android:layout_marginEnd="8dp" />
+
+                <Button
+                    android:id="@+id/btnRetry"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/retry"
+                    android:backgroundTint="@color/key_btn_bg" />
+            </LinearLayout>
+        </LinearLayout>
 
     </LinearLayout>
 

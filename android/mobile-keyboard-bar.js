@@ -108,13 +108,18 @@
       }
 
       // Resolve the target element
-      let target = (document.activeElement && !bar.contains(document.activeElement))
+      let target = (document.activeElement && !bar.contains(document.activeElement) && document.activeElement !== document.body)
         ? document.activeElement
-        : (lastActiveElement || document.body);
+        : (lastActiveElement ||
+           document.querySelector('.monaco-editor.focused textarea.inputarea') ||
+           document.querySelector('.monaco-editor textarea.inputarea') ||
+           document.querySelector('.terminal.xterm textarea.xterm-helper-textarea') ||
+           document.querySelector('textarea, input:not([type="hidden"])') ||
+           document.body);
 
       // Re-focus target if it somehow blurred
       if (target && typeof target.focus === "function" && document.activeElement !== target) {
-        target.focus();
+        try { target.focus(); } catch (e) {}
       }
 
       const isModifierCombo = ctrlActive || altActive;
@@ -136,16 +141,27 @@
         }
       } else {
         const keyValue = k.char || k.key;
+        const keyMap = {
+          "Escape": 27, "Tab": 9, "Control": 17, "Alt": 18,
+          "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40
+        };
+        const numericCode = keyMap[k.key] || 0;
         const keyCode = k.key || ("Key" + keyValue.toUpperCase());
 
         const evtDown = new KeyboardEvent("keydown", {
           key: keyValue,
           code: keyCode,
+          keyCode: numericCode,
+          which: numericCode,
           ctrlKey: ctrlActive,
           altKey: altActive,
           bubbles: true,
           cancelable: true
         });
+        try {
+          Object.defineProperty(evtDown, "keyCode", { get: () => numericCode });
+          Object.defineProperty(evtDown, "which", { get: () => numericCode });
+        } catch (e) {}
         target.dispatchEvent(evtDown);
 
         // Editor & Terminal navigation helpers
@@ -164,7 +180,7 @@
             const p = Math.max(0, target.selectionStart - 1);
             target.setSelectionRange(p, p);
           } else if (k.key === "ArrowRight" && typeof target.setSelectionRange === "function") {
-            const p = Math.min(target.value.length, target.selectionEnd + 1);
+            const p = Math.min((target.value ? target.value.length : 0), target.selectionEnd + 1);
             target.setSelectionRange(p, p);
           }
         }
@@ -172,11 +188,17 @@
         const evtUp = new KeyboardEvent("keyup", {
           key: keyValue,
           code: keyCode,
+          keyCode: numericCode,
+          which: numericCode,
           ctrlKey: ctrlActive,
           altKey: altActive,
           bubbles: true,
           cancelable: true
         });
+        try {
+          Object.defineProperty(evtUp, "keyCode", { get: () => numericCode });
+          Object.defineProperty(evtUp, "which", { get: () => numericCode });
+        } catch (e) {}
         target.dispatchEvent(evtUp);
       }
 

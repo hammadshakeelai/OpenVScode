@@ -54,7 +54,8 @@ public class VScodeService extends Service {
                         PowerManager.PARTIAL_WAKE_LOCK,
                         "OpenVScode::CpuCompilationLock"
                 );
-                wakeLock.acquire();
+                // Hold wake lock with a 30-minute safety timeout to prevent permanent battery drain if orphaned
+                wakeLock.acquire(30 * 60 * 1000L);
             }
 
             WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
