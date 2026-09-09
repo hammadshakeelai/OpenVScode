@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">OpenVScode</string>
+    <string name="server_starting">Starting OpenVScode IDE\u2026</string>
+    <string name="server_loading_sub">Initializing Python, C++ (Clang), and Jupyter environment</string>
+    <string name="service_running_title">OpenVScode IDE Active</string>
+    <string name="service_running_desc">Python, C++, and Jupyter server running in background</string>
+    <string name="action_stop">Stop Server</string>
+    <string name="retry">Retry Connection</string>
+</resources>

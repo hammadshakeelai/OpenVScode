@@ -56,6 +56,14 @@
 
   let ctrlActive = false;
   let altActive = false;
+  let lastActiveElement = null;
+
+  // Track the most recent active element in the IDE
+  document.addEventListener("focusin", (e) => {
+    if (e.target && !bar.contains(e.target)) {
+      lastActiveElement = e.target;
+    }
+  });
 
   keys.forEach((k) => {
     const btn = document.createElement("button");
@@ -73,7 +81,16 @@
       flex-shrink: 0;
       outline: none;
       touch-action: manipulation;
+      cursor: pointer;
     `;
+
+    // CRITICAL: Prevent stealing focus from active editor / terminal
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+    });
+    btn.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+    });
 
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -90,27 +107,75 @@
         return;
       }
 
-      // Dispatch character or key event
-      const target = document.activeElement || document.body;
+      // Resolve the target element
+      let target = (document.activeElement && !bar.contains(document.activeElement))
+        ? document.activeElement
+        : (lastActiveElement || document.body);
 
-      if (k.char) {
-        document.execCommand("insertText", false, k.char);
-      } else if (k.key) {
+      // Re-focus target if it somehow blurred
+      if (target && typeof target.focus === "function" && document.activeElement !== target) {
+        target.focus();
+      }
+
+      const isModifierCombo = ctrlActive || altActive;
+
+      if (k.char && !isModifierCombo) {
+        // Direct character insertion
+        if (typeof target.setRangeText === "function") {
+          const start = target.selectionStart;
+          const end = target.selectionEnd;
+          target.setRangeText(k.char, start, end, "end");
+          target.dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            cancelable: false,
+            inputType: "insertText",
+            data: k.char
+          }));
+        } else {
+          document.execCommand("insertText", false, k.char);
+        }
+      } else {
+        const keyValue = k.char || k.key;
+        const keyCode = k.key || ("Key" + keyValue.toUpperCase());
+
         const evtDown = new KeyboardEvent("keydown", {
-          key: k.key,
-          code: k.key,
+          key: keyValue,
+          code: keyCode,
           ctrlKey: ctrlActive,
           altKey: altActive,
           bubbles: true,
+          cancelable: true
         });
         target.dispatchEvent(evtDown);
 
+        // Editor & Terminal navigation helpers
+        if (!isModifierCombo) {
+          if (k.key === "Tab" && typeof target.setRangeText === "function") {
+            const start = target.selectionStart;
+            const end = target.selectionEnd;
+            target.setRangeText("    ", start, end, "end");
+            target.dispatchEvent(new InputEvent("input", {
+              bubbles: true,
+              cancelable: false,
+              inputType: "insertText",
+              data: "    "
+            }));
+          } else if (k.key === "ArrowLeft" && typeof target.setSelectionRange === "function") {
+            const p = Math.max(0, target.selectionStart - 1);
+            target.setSelectionRange(p, p);
+          } else if (k.key === "ArrowRight" && typeof target.setSelectionRange === "function") {
+            const p = Math.min(target.value.length, target.selectionEnd + 1);
+            target.setSelectionRange(p, p);
+          }
+        }
+
         const evtUp = new KeyboardEvent("keyup", {
-          key: k.key,
-          code: k.key,
+          key: keyValue,
+          code: keyCode,
           ctrlKey: ctrlActive,
           altKey: altActive,
           bubbles: true,
+          cancelable: true
         });
         target.dispatchEvent(evtUp);
       }

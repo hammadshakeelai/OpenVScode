@@ -13,7 +13,7 @@ venv/
 *.obj
 *.out
 *.exe
-main
+/examples/hello_cpp/main
 
 # Jupyter Checkpoints
 .ipynb_checkpoints*/
@@ -25,3 +25,10 @@ main
 # OS generated
 .DS_Store
 Thumbs.db
+
+# Android / Gradle build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk.idsig
