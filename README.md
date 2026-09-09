@@ -22,6 +22,14 @@
 
 ## 📲 Install the APK (straight from your phone)
 
+> [!IMPORTANT]
+> **Read this before you tap.** The APK is the Android *shell* — a WebView, a
+> foreground service and the touch keybar. It expects an IDE server on
+> `127.0.0.1:8080`, and **the installer that provisions that server is not written
+> yet** (see [below](#-alternative-run-it-under-termux)). Install it today and you get
+> the app plus a "retry connection" screen, not a working IDE. It is worth installing
+> if you want to try the shell, help test it, or point it at a server you run yourself.
+
 **On the phone, tap this link:**
 
 ### → [**Download OpenVScode-Mobile.apk**](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk) ←
