@@ -41,25 +41,67 @@ jobs:
         working-directory: android
         run: gradle --no-daemon assembleDebug
 
-      - name: Stage APK with a stable name
+      - name: Stage release assets
         run: |
           set -e
           src="android/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$src"
           mkdir -p dist
           cp "$src" dist/OpenVScode-Mobile.apk
-          ls -lh dist/OpenVScode-Mobile.apk
 
-      - name: Upload APK as a build artifact
+          # Chrome on Android routes application/vnd.android.package-archive
+          # downloads through its APK-specific Safe Browsing path and holds the
+          # file pending a verdict. A debug-signed APK from a low-traffic repo
+          # has no download reputation, so that verdict never resolves and the
+          # download hangs at ~100% with no error. GitHub serves .zip as
+          # application/octet-stream, which avoids that path entirely, so ship
+          # the same bytes both ways and let the README point phones at the zip.
+          ( cd dist && zip -q -9 OpenVScode-Mobile-apk.zip OpenVScode-Mobile.apk )
+
+          ( cd dist && sha256sum OpenVScode-Mobile.apk OpenVScode-Mobile-apk.zip > SHA256SUMS.txt )
+
+          ls -lh dist/
+          cat dist/SHA256SUMS.txt
+
+      - name: Verify the zip round-trips to the identical APK
+        run: |
+          set -e
+          mkdir -p verify
+          unzip -q -o dist/OpenVScode-Mobile-apk.zip -d verify
+          a=$(sha256sum dist/OpenVScode-Mobile.apk | cut -d' ' -f1)
+          b=$(sha256sum verify/OpenVScode-Mobile.apk | cut -d' ' -f1)
+          echo "apk in dist : $a"
+          echo "apk from zip: $b"
+          test "$a" = "$b"
+          echo "OK: zip contains byte-identical APK"
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OpenVScode-Mobile-apk
-          path: dist/OpenVScode-Mobile.apk
+          path: |
+            dist/OpenVScode-Mobile.apk
+            dist/OpenVScode-Mobile-apk.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Publish APK to the GitHub Release
+      - name: Publish to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/OpenVScode-Mobile.apk
+          files: |
+            dist/OpenVScode-Mobile.apk
+            dist/OpenVScode-Mobile-apk.zip
+            dist/SHA256SUMS.txt
           generate_release_notes: true
+          body: |
+            ## Install on a phone
+
+            **Recommended — [OpenVScode-Mobile-apk.zip](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile-apk.zip)**
+            Download it, then open **Files → Downloads**, extract, and tap the APK inside.
+
+            The direct `.apk` below is the same build, but Chrome on Android tends to
+            stall it at ~100%: it holds APK downloads pending a Safe Browsing verdict
+            that never resolves for a debug-signed build. Use the zip if that happens.
+
+            `SHA256SUMS.txt` covers both files.

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk">
+  <a href="https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile-apk.zip">
     <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Android%208.0%2B-007acc?style=for-the-badge&logo=android&logoColor=white" alt="Download the APK">
   </a>
 </p>
@@ -32,25 +32,39 @@
 
 **On the phone, tap this link:**
 
-### → [**Download OpenVScode-Mobile.apk**](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk) ←
+### → [**Download OpenVScode-Mobile-apk.zip**](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile-apk.zip) ←
 
 That link always resolves to the newest build, so it never goes stale. Then:
 
-1. Open the download from the notification shade, or **Files → Downloads**.
-2. Android will ask to allow installs from your browser — tap **Settings**, turn on
+1. Open **Files → Downloads** and tap the zip to extract it.
+2. Tap `OpenVScode-Mobile.apk` inside.
+3. Android will ask to allow installs from this source — tap **Settings**, turn on
    **Allow from this source**, go back, and tap **Install**.
-3. Launch **OpenVScode** from your app drawer.
+4. Launch **OpenVScode** from your app drawer.
+
+> [!TIP]
+> **Why a zip and not the APK directly?** Chrome on Android routes `.apk` downloads
+> through an APK-specific Safe Browsing check and holds the file until a verdict comes
+> back. A debug-signed build from a small repo has no download reputation, so that
+> verdict never resolves and the download **hangs at ~100% with no error** — the bytes
+> have all arrived, Chrome just will not release the file. GitHub serves `.zip` as
+> `application/octet-stream`, which skips that path. Same bytes either way; the
+> checksums on each release prove it.
 
 <details>
 <summary><b>Other ways to get the APK</b></summary>
 
+- **Direct APK:** [OpenVScode-Mobile.apk](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk)
+  — identical build. Fine in Firefox, Samsung Internet, or on a desktop; this is the
+  one that stalls in Chrome for Android.
+- **Verify what you downloaded:** each release ships `SHA256SUMS.txt` covering both
+  files. CI also fails the build if the zip does not extract to a byte-identical APK.
 - **Browse every version:** the [Releases page](https://github.com/hammadshakeelai/OpenVScode/releases)
   lists each build with its notes.
-- **Bleeding edge:** every push to `master` uploads an APK to its
+- **Bleeding edge:** every push to `master` uploads both files to its
   [Actions run](https://github.com/hammadshakeelai/OpenVScode/actions/workflows/android.yml)
-  as a build artifact. GitHub requires you to be signed in to download artifacts and
-  hands you a `.zip` you have to unpack, so the release link above is the one that
-  works with a single tap on a phone.
+  as build artifacts. GitHub requires you to be signed in to download those, so the
+  release link above is the one that works with a single tap on a phone.
 - **Build it yourself:** `cd android && ./gradlew assembleDebug` — the APK lands in
   `android/app/build/outputs/apk/debug/`.
 
