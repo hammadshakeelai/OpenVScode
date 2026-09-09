@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenVScode Mobile Simulator & Test Harness</title>
+  <link rel="stylesheet" href="simulator.css">
+</head>
+<body>
+
+  <!-- Top Controls Bar -->
+  <header class="harness-header">
+    <div class="brand-section">
+      <div class="brand-badge">
+        <span>⚡</span> OpenVScode Mobile
+      </div>
+      <div class="brand-info">
+        <div class="brand-title">Smartphone Viewport & Keybar Test Harness</div>
+        <div class="brand-sub">Android APK Verification & Virtual Key Injection</div>
+      </div>
+    </div>
+
+    <div class="controls-section">
+      <button id="btnToggleOrientation" class="harness-btn">
+        <span class="icon">📱</span> Portrait (390×844)
+      </button>
+
+      <button id="btnToggleKeyboard" class="harness-btn">
+        <span class="icon">⌨️</span> Toggle Soft Keyboard
+      </button>
+
+      <button id="btnResetEditor" class="harness-btn" onclick="window.simulator.codeEditor.value = window.simulator.sampleCppCode; window.simulator.updateLineNumbers(); window.simulator.updateCaretMetrics();">
+        <span class="icon">🔄</span> Reset Code
+      </button>
+
+      <button id="btnRunTests" class="harness-btn primary">
+        <span>▶</span> Run All Tests
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Split Layout -->
+  <main class="main-workspace">
+
+    <!-- Left: Smartphone Simulation Viewport -->
+    <section class="simulator-stage">
+      
+      <!-- Phone Chassis -->
+      <div id="phoneChassis" class="phone-chassis portrait">
+        
+        <!-- Hardware speaker -->
+        <div class="phone-speaker"></div>
+
+        <!-- Phone Screen Frame -->
+        <div class="phone-screen">
+          
+          <!-- Status Bar -->
+          <div class="phone-status-bar">
+            <span class="status-time">9:41</span>
+            <div class="phone-camera-hole"></div>
+            <div class="status-right">
+              <span>5G</span>
+              <span>📶</span>
+              <span>98% 🔋</span>
+            </div>
+          </div>
+
+          <!-- Application Container -->
+          <div id="appViewport" class="app-viewport">
+            
+            <!-- OpenVScode Navigation Header -->
+            <div class="app-header">
+              <div class="app-title">
+                <span class="status-dot"></span>
+                <span>OpenVScode Mobile</span>
+              </div>
+              <div class="app-header-actions">
+                <button class="icon-btn" title="Run Code" onclick="window.simulator.switchTab('terminal'); window.simulator.executeTerminalCommand('clang++ main.cpp -o main && ./main');">▶ Run</button>
+                <button class="icon-btn" title="Toggle Terminal" onclick="window.simulator.switchTab(window.simulator.activeTab === 'editor' ? 'terminal' : 'editor');">💻 Shell</button>
+              </div>
+            </div>
+
+            <!-- Tabs Bar -->
+            <div class="app-tabs">
+              <div id="tabEditor" class="app-tab active">
+                <span>📄</span> main.cpp
+              </div>
+              <div id="tabTerminal" class="app-tab">
+                <span>💻</span> bash (Terminal)
+              </div>
+            </div>
+
+            <!-- App Content Area (Editor & Terminal) -->
+            <div class="app-content">
+              
+              <!-- Code Editor Pane -->
+              <div id="editorPane" class="editor-pane">
+                <div id="lineNumbers" class="line-numbers">1</div>
+                <div class="code-area-wrapper">
+                  <textarea id="codeEditor" class="code-editor" spellcheck="false"></textarea>
+                </div>
+              </div>
+
+              <!-- Terminal Pane -->
+              <div id="terminalPane" class="terminal-pane hidden">
+                <div class="terminal-header">
+                  <span>Terminal (xterm.js simulation)</span>
+                  <span style="color: #4ec9b0; font-size: 10px;">Connected: 127.0.0.1:8080</span>
+                </div>
+                <div id="terminalBody" class="terminal-body">
+                  <div style="color: #6e7681;">OpenVScode Android Terminal Emulator v1.0.0</div>
+                  <div style="color: #6e7681;">Type 'clang++ main.cpp', 'python main.py', 'ls', or 'clear'</div>
+                </div>
+                <div class="terminal-input-row" style="padding: 4px 10px; background: #181818; border-top: 1px solid #282828;">
+                  <span class="terminal-prompt">$</span>
+                  <input id="terminalInput" class="terminal-input" type="text" placeholder="type bash command and press enter..." autocomplete="off">
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Native Android Touch Coding Keybar (Docked above keyboard) -->
+            <div id="nativeKeybar" class="native-keybar">
+              <!-- Populated dynamically with ESC, TAB, CTRL, ALT, braces, arrows -->
+            </div>
+
+            <!-- Virtual Keyboard (Simulating Android adjustResize) -->
+            <div id="virtualKeyboard" class="virtual-keyboard hidden">
+              <!-- Row 1: Numbers -->
+              <div class="kb-row">
+                <button class="kb-key">1</button>
+                <button class="kb-key">2</button>
+                <button class="kb-key">3</button>
+                <button class="kb-key">4</button>
+                <button class="kb-key">5</button>
+                <button class="kb-key">6</button>
+                <button class="kb-key">7</button>
+                <button class="kb-key">8</button>
+                <button class="kb-key">9</button>
+                <button class="kb-key">0</button>
+              </div>
+
+              <!-- Row 2: QWERTY -->
+              <div class="kb-row">
+                <button class="kb-key">q</button>
+                <button class="kb-key">w</button>
+                <button class="kb-key">e</button>
+                <button class="kb-key">r</button>
+                <button class="kb-key">t</button>
+                <button class="kb-key">y</button>
+                <button class="kb-key">u</button>
+                <button class="kb-key">i</button>
+                <button class="kb-key">o</button>
+                <button class="kb-key">p</button>
+              </div>
+
+              <!-- Row 3: ASDF -->
+              <div class="kb-row">
+                <button class="kb-key">a</button>
+                <button class="kb-key">s</button>
+                <button class="kb-key">d</button>
+                <button class="kb-key">f</button>
+                <button class="kb-key">g</button>
+                <button class="kb-key">h</button>
+                <button class="kb-key">j</button>
+                <button class="kb-key">k</button>
+                <button class="kb-key">l</button>
+                <button class="kb-key action-key" data-action="backspace">⌫</button>
+              </div>
+
+              <!-- Row 4: ZXCV -->
+              <div class="kb-row">
+                <button class="kb-key action-key" data-action="hide">⌨️ ▾</button>
+                <button class="kb-key">z</button>
+                <button class="kb-key">x</button>
+                <button class="kb-key">c</button>
+                <button class="kb-key">v</button>
+                <button class="kb-key">b</button>
+                <button class="kb-key">n</button>
+                <button class="kb-key">m</button>
+                <button class="kb-key space-key" data-action="space">Space</button>
+                <button class="kb-key enter-key" data-action="enter">↵</button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Bottom Android Navigation Pill -->
+          <div class="phone-nav-bar">
+            <div class="gesture-pill"></div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- Right: Diagnostics & Test Execution Dashboard -->
+    <aside class="harness-dashboard">
+      
+      <!-- Metrics Cards -->
+      <div class="dashboard-content">
+        
+        <!-- Live State Metrics -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Viewport</span>
+            <span id="valViewport" class="metric-value">390 × 754 px</span>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Orientation</span>
+            <span id="valOrientation" class="metric-value">PORTRAIT</span>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Keyboard</span>
+            <span id="valKeyboard" class="metric-value">HIDDEN</span>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Active Focus</span>
+            <span id="valFocus" class="metric-value">#codeEditor</span>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Caret Pos</span>
+            <span id="valCaret" class="metric-value">Ln 1, Col 1</span>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Modifiers</span>
+            <span id="valModifiers" class="metric-value">NONE</span>
+          </div>
+        </div>
+
+        <!-- Automated Test Runner Card -->
+        <div class="test-summary-card">
+          <div class="test-summary-header">
+            <div>
+              <div style="font-size: 14px; font-weight: 700; color: #ffffff;">Automated Verification Suite</div>
+              <div style="font-size: 11px; color: #8fa0b5;">10 Automated Mobile Component Tests</div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <span style="font-size: 12px; color: #4ec9b0; font-weight: bold;">Passed: <span id="valTestsPassed">0/10</span></span>
+              <span style="font-size: 12px; color: #f48771; font-weight: bold;">Failed: <span id="valTestsFailed">0</span></span>
+            </div>
+          </div>
+
+          <div class="test-progress-bar">
+            <div id="testProgressFill" class="test-progress-fill"></div>
+          </div>
+
+          <!-- Test List -->
+          <div id="testList" class="test-list">
+            <!-- Populated dynamically by test-suite.js -->
+          </div>
+        </div>
+
+        <!-- Live Event Monitor -->
+        <div class="event-monitor-card">
+          <div class="card-header">
+            <div class="card-title">Live Input & Keyboard Event Log</div>
+            <button class="harness-btn" style="padding: 2px 8px; font-size: 11px;" onclick="window.simulator.clearLogs()">Clear Log</button>
+          </div>
+
+          <div class="event-log-container">
+            <table class="live-event-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Key / Char</th>
+                  <th>Code</th>
+                  <th>Ctrl/Alt</th>
+                  <th>Target</th>
+                </tr>
+              </thead>
+              <tbody id="eventTableBody">
+                <!-- Log rows dynamically prepended -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- Scripts -->
+  <script src="simulator.js"></script>
+  <script src="test-suite.js"></script>
+
+</body>
+</html>

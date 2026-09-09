@@ -1,27 +1,87 @@
-# 📱 OpenVScode Mobile IDE
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="OpenVScode Mobile IDE — a full VS Code environment that runs on your phone, with Python 3, C++ (Clang) and Jupyter kernels" width="100%">
+</p>
 
-> A complete **VS Code** development environment tuned for **Smartphones (Android)** with **Python 3**, **C++ (Clang/LLVM)**, and **Jupyter Notebooks (Python & C++ Kernels)** built directly in.
+<p align="center">
+  <a href="https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk">
+    <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Android%208.0%2B-007acc?style=for-the-badge&logo=android&logoColor=white" alt="Download the APK">
+  </a>
+</p>
 
-[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20ARM64-green.svg)](#)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#)
-[![VS Code](https://img.shields.io/badge/editor-Code--Server%20%2F%20OpenVSCode-007acc.svg)](#)
-[![Python](https://img.shields.io/badge/python-3.11+-yellow.svg)](#)
-[![C++](https://img.shields.io/badge/c++-Clang%2020-red.svg)](#)
-[![Jupyter](https://img.shields.io/badge/jupyter-Python%20%26%20C%2B%2B%20Kernels-orange.svg)](#)
+<p align="center">
+  <a href="https://github.com/hammadshakeelai/OpenVScode/actions/workflows/android.yml"><img src="https://github.com/hammadshakeelai/OpenVScode/actions/workflows/android.yml/badge.svg" alt="Build status"></a>
+  <a href="https://github.com/hammadshakeelai/OpenVScode/releases/latest"><img src="https://img.shields.io/github/v/release/hammadshakeelai/OpenVScode?color=007acc" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-Android%20%7C%20Linux%20ARM64-green.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license">
+  <img src="https://img.shields.io/badge/python-3.11+-yellow.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/c++-Clang%2020-red.svg" alt="Clang 20">
+  <img src="https://img.shields.io/badge/jupyter-Python%20%26%20C%2B%2B%20Kernels-orange.svg" alt="Jupyter kernels">
+</p>
 
 ---
 
-## ⚡ Quickstart (Install on Phone in 2 Minutes)
+## 📲 Install the APK (straight from your phone)
 
-### Step 1: Install Termux on your phone
-Download **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/) (do not use Google Play Store version as it is deprecated).
+**On the phone, tap this link:**
 
-### Step 2: Clone and Run Installer
-Open Termux and paste:
+### → [**Download OpenVScode-Mobile.apk**](https://github.com/hammadshakeelai/OpenVScode/releases/latest/download/OpenVScode-Mobile.apk) ←
 
+That link always resolves to the newest build, so it never goes stale. Then:
+
+1. Open the download from the notification shade, or **Files → Downloads**.
+2. Android will ask to allow installs from your browser — tap **Settings**, turn on
+   **Allow from this source**, go back, and tap **Install**.
+3. Launch **OpenVScode** from your app drawer.
+
+<details>
+<summary><b>Other ways to get the APK</b></summary>
+
+- **Browse every version:** the [Releases page](https://github.com/hammadshakeelai/OpenVScode/releases)
+  lists each build with its notes.
+- **Bleeding edge:** every push to `master` uploads an APK to its
+  [Actions run](https://github.com/hammadshakeelai/OpenVScode/actions/workflows/android.yml)
+  as a build artifact. GitHub requires you to be signed in to download artifacts and
+  hands you a `.zip` you have to unpack, so the release link above is the one that
+  works with a single tap on a phone.
+- **Build it yourself:** `cd android && ./gradlew assembleDebug` — the APK lands in
+  `android/app/build/outputs/apk/debug/`.
+
+</details>
+
+> [!NOTE]
+> These are **debug** builds, signed with the standard Android debug key. That is what
+> makes them installable without a Play Store account. Because `app/build.gradle` sets
+> `applicationIdSuffix = ".debug"`, the package id is `com.openvscode.mobile.debug`, so
+> it installs *alongside* a release build rather than replacing one.
+
+### What the app does
+
+The APK is a native Android shell around the IDE. It runs a **foreground service**
+holding a wake lock, so Android will not kill your compiler mid-build; it renders the
+editor in a hardware-accelerated **WebView**; and it overlays a **touch coding keybar**
+(`ESC`, `TAB`, `CTRL`, `ALT`, `{ }`, `( )`, arrows) that a phone keyboard does not give you.
+
+It expects the IDE server described below to be reachable on `127.0.0.1:8080`.
+
+---
+
+## ⚡ Alternative: run it under Termux
+
+> [!WARNING]
+> **The installer scripts are not written yet.** `setup.sh`, `start.sh` and everything
+> under `scripts/` are currently empty placeholder files, so the commands in this
+> section will not do anything yet. The tuned configuration in `config/`, the examples,
+> and the Android app are all real — this bootstrap path is the piece still outstanding.
+> Contributions welcome via the [issue tracker](https://github.com/hammadshakeelai/OpenVScode/issues).
+
+### Step 1: Install Termux
+Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/). The Google
+Play build is deprecated and will not work.
+
+### Step 2: Clone and run the installer
 ```bash
 pkg update && pkg install -y git
-git clone https://github.com/YourUsername/OpenVScode.git
+git clone https://github.com/hammadshakeelai/OpenVScode.git
 cd OpenVScode
 bash setup.sh
 ```
@@ -30,10 +90,12 @@ bash setup.sh
 ```bash
 ./start.sh
 ```
-Open your browser at `http://127.0.0.1:8080`.
+Then open `http://127.0.0.1:8080` in your browser.
 
 > [!TIP]
-> **Install as Fullscreen App**: In Chrome/Edge/Brave, tap the three dots (⋮) and select **"Add to Home screen"** or **"Install app"**. It will launch borderless without any address bar, just like a native Android APK!
+> **No APK needed for a fullscreen app:** in Chrome/Edge/Brave, tap ⋮ →
+> **Add to Home screen** / **Install app**. It launches borderless, with no address
+> bar, just like a native app.
 
 ---
 
@@ -68,27 +130,27 @@ Open your browser at `http://127.0.0.1:8080`.
 
 ```
 OpenVScode/
-├── setup.sh                         # Master 1-click bootstrap installer
-├── start.sh                         # Launcher script with wake-lock & IP display
+├── setup.sh                         # 1-click bootstrap installer   (empty — see warning above)
+├── start.sh                         # Launcher with wake-lock & IP   (empty — see warning above)
 ├── config/
-│   ├── settings.json               # Pre-tuned mobile VS Code settings
-│   ├── keybindings.json            # Mobile touch shortcuts
-│   └── compile_flags.txt           # Clangd include paths & C++20 standard
-├── scripts/
-│   ├── install_toolchain.sh        # Python 3, Clang/LLVM, Node.js installer
-│   ├── install_jupyter_kernels.sh  # Python & C++ Jupyter kernels setup
-│   └── install_extensions.sh       # Pre-installs extensions from Open VSX
+│   ├── settings.json                # Pre-tuned mobile VS Code settings
+│   ├── keybindings.json             # Mobile touch shortcuts
+│   └── compile_flags.txt            # Clangd include paths & C++20 standard
+├── scripts/                         # Toolchain / kernel / extension installers (empty — see above)
 ├── examples/
-│   ├── hello_python/               # Sample Python project
-│   ├── hello_cpp/                  # Sample C++ project with Makefile
-│   └── notebooks/                  # Sample Python & C++ Jupyter notebooks
-├── android/
-│   ├── README.md                   # Fullscreen PWA and GeckoView APK guide
-│   ├── manifest.json               # PWA manifest for standalone app mode
-│   └── mobile-keyboard-bar.js      # On-screen touch coding keyboard bar
+│   ├── hello_python/                # Sample Python project
+│   ├── hello_cpp/                   # Sample C++ project with Makefile
+│   └── notebooks/                   # Sample Python & C++ Jupyter notebooks
+├── android/                         # Native Android app (Gradle project)
+│   ├── app/src/main/java/…          # MainActivity (WebView) + VScodeService (foreground service)
+│   ├── app/src/main/res/…           # Layouts, theme, launcher icon
+│   ├── manifest.json                # PWA manifest for standalone browser mode
+│   └── mobile-keyboard-bar.js       # On-screen touch coding keyboard bar
+├── .github/workflows/android.yml    # CI: builds the APK, attaches it to releases
 └── docs/
-    ├── MOBILE_OPTIMIZATIONS.md     # RAM, battery, and Android 12+ process fixes
-    └── JUPYTER_CPP_EXPLAINED.md    # In-depth guide on C++ Jupyter kernels
+    ├── assets/banner.svg            # README banner
+    ├── MOBILE_OPTIMIZATIONS.md      # RAM, battery, and Android 12+ process fixes
+    └── JUPYTER_CPP_EXPLAINED.md     # In-depth guide on C++ Jupyter kernels
 ```
 
 ---
@@ -110,6 +172,23 @@ For maximum stability:
 1. **Disable Battery Optimization**: Set Termux/OpenVScode to "Unrestricted" in Android App Settings.
 2. **Android 12+ Phantom Process Killer**: If you experience sudden background kills during heavy compiling, disable phantom process limits (see [docs/MOBILE_OPTIMIZATIONS.md](docs/MOBILE_OPTIMIZATIONS.md)).
 3. **Keyboard**: We recommend installing **Hacker's Keyboard** from F-Droid for a full 5-row desktop layout.
+
+---
+
+## 🧑‍💻 Building the Android app locally
+
+Requires JDK 17 and the Android SDK (compileSdk 35).
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+`local.properties` is deliberately untracked — Android Studio writes your own `sdk.dir`
+into it on first open, or you can set `ANDROID_HOME` in your environment instead.
+
+Every push to `master` runs the same build in CI, and pushing a `v*` tag publishes the
+resulting APK to a GitHub Release.
 
 ---
 
