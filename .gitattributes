@@ -1,0 +1,10 @@
+# Enforce LF endings on shell scripts and code for Linux/Android
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.cpp text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.ipynb text eol=lf
+*.js text eol=lf
+*.md text eol=lf
