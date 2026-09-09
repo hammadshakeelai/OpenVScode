@@ -1,0 +1,136 @@
+/**
+ * OpenVScode - Mobile Touch Coding Key Bar
+ * Injects a floating/docked touch bar above the Android virtual keyboard
+ * providing easy access to ESC, TAB, CTRL, ALT, brackets, and arrows.
+ */
+(function () {
+  if (window.__mobileKeyBarLoaded) return;
+  window.__mobileKeyBarLoaded = true;
+
+  const bar = document.createElement("div");
+  bar.id = "openvscode-mobile-keybar";
+  bar.style.cssText = `
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 38px;
+    background: #181818;
+    border-top: 1px solid #333;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    z-index: 999999;
+    padding: 3px 6px;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.5);
+    user-select: none;
+    -webkit-user-select: none;
+  `;
+
+  const keys = [
+    { label: "ESC", key: "Escape" },
+    { label: "TAB", key: "Tab" },
+    { label: "CTRL", key: "Control", toggle: true },
+    { label: "ALT", key: "Alt", toggle: true },
+    { label: "{", char: "{" },
+    { label: "}", char: "}" },
+    { label: "(", char: "(" },
+    { label: ")", char: ")" },
+    { label: "[", char: "[" },
+    { label: "]", char: "]" },
+    { label: ";", char: ";" },
+    { label: ":", char: ":" },
+    { label: "=", char: "=" },
+    { label: "\"", char: "\"" },
+    { label: "'", char: "'" },
+    { label: "/", char: "/" },
+    { label: "\\", char: "\\" },
+    { label: "|", char: "|" },
+    { label: "_", char: "_" },
+    { label: "←", key: "ArrowLeft" },
+    { label: "↑", key: "ArrowUp" },
+    { label: "↓", key: "ArrowDown" },
+    { label: "→", key: "ArrowRight" },
+  ];
+
+  let ctrlActive = false;
+  let altActive = false;
+
+  keys.forEach((k) => {
+    const btn = document.createElement("button");
+    btn.textContent = k.label;
+    btn.style.cssText = `
+      background: #2d2d2d;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      margin: 0 3px;
+      padding: 2px 10px;
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: bold;
+      flex-shrink: 0;
+      outline: none;
+      touch-action: manipulation;
+    `;
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (k.toggle) {
+        if (k.key === "Control") {
+          ctrlActive = !ctrlActive;
+          btn.style.background = ctrlActive ? "#007acc" : "#2d2d2d";
+        } else if (k.key === "Alt") {
+          altActive = !altActive;
+          btn.style.background = altActive ? "#007acc" : "#2d2d2d";
+        }
+        return;
+      }
+
+      // Dispatch character or key event
+      const target = document.activeElement || document.body;
+
+      if (k.char) {
+        document.execCommand("insertText", false, k.char);
+      } else if (k.key) {
+        const evtDown = new KeyboardEvent("keydown", {
+          key: k.key,
+          code: k.key,
+          ctrlKey: ctrlActive,
+          altKey: altActive,
+          bubbles: true,
+        });
+        target.dispatchEvent(evtDown);
+
+        const evtUp = new KeyboardEvent("keyup", {
+          key: k.key,
+          code: k.key,
+          ctrlKey: ctrlActive,
+          altKey: altActive,
+          bubbles: true,
+        });
+        target.dispatchEvent(evtUp);
+      }
+
+      // Reset modifier keys after non-modifier press
+      if (ctrlActive) {
+        ctrlActive = false;
+        const cBtn = Array.from(bar.children).find((b) => b.textContent === "CTRL");
+        if (cBtn) cBtn.style.background = "#2d2d2d";
+      }
+      if (altActive) {
+        altActive = false;
+        const aBtn = Array.from(bar.children).find((b) => b.textContent === "ALT");
+        if (aBtn) aBtn.style.background = "#2d2d2d";
+      }
+    });
+
+    bar.appendChild(btn);
+  });
+
+  document.body.appendChild(bar);
+  console.log("[OpenVScode] Mobile touch key bar mounted.");
+})();

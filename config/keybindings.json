@@ -1,0 +1,16 @@
+[
+  {
+    "key": "ctrl+enter",
+    "command": "notebook.cell.execute",
+    "when": "notebookEditorFocused && !notebookOutputFocused"
+  },
+  {
+    "key": "shift+enter",
+    "command": "notebook.cell.executeAndSelectBelow",
+    "when": "notebookEditorFocused && !notebookOutputFocused"
+  },
+  {
+    "key": "ctrl+alt+n",
+    "command": "code-runner.run"
+  }
+]

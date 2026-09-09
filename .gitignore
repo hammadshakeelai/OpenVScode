@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# C / C++ build outputs
+*.o
+*.obj
+*.out
+*.exe
+main
+
+# Jupyter Checkpoints
+.ipynb_checkpoints*/
+
+# VS Code User State
+.vscode/
+*.log
+
+# OS generated
+.DS_Store
+Thumbs.db

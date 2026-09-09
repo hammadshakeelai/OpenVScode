@@ -1,0 +1,23 @@
+{
+  "name": "OpenVScode Mobile IDE",
+  "short_name": "OpenVScode",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1e1e1e",
+  "theme_color": "#007acc",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/microsoft/vscode/main/resources/linux/code.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/microsoft/vscode/main/resources/linux/code.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
