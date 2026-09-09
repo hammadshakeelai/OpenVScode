@@ -146,6 +146,8 @@ OpenVScode/
 │   ├── app/src/main/res/…           # Layouts, theme, launcher icon
 │   ├── manifest.json                # PWA manifest for standalone browser mode
 │   └── mobile-keyboard-bar.js       # On-screen touch coding keyboard bar
+├── test-harness/                    # Browser simulator for the keybar: phone viewport,
+│                                    # virtual-keyboard resize, key injection, test suite
 ├── .github/workflows/android.yml    # CI: builds the APK, attaches it to releases
 └── docs/
     ├── assets/banner.svg            # README banner
