@@ -151,3 +151,53 @@ echo "  too long to patch:     $shebang_toolong"
 
 echo "verification — code-server's launcher:"
 head -n 1 "$TREE/opt/code-server/bin/code-server" | sed 's/^/    /'
+
+# --- absolute symlinks ----------------------------------------------------
+#
+# The third place absolute paths leak out. A Debian image is full of symlinks
+# whose target starts at the filesystem root — /usr/local/bin/code-server points
+# at /opt/code-server/bin/code-server, and dozens of libraries do the same. On
+# Android those resolve against the real root, where nothing exists, so they
+# dangle. Measured: 236 of them, and the code-server one alone is enough to make
+# the IDE unstartable with "exec: code-server: not found".
+#
+# Relative symlinks are already correct and are left alone.
+echo
+echo "patching absolute symlinks"
+
+link_patched=0
+link_skipped=0
+
+while IFS= read -r -d '' l; do
+    target=$(readlink "$l") || continue
+    case "$target" in
+        "$ROOTFS_PATH"/*)
+            # Already rewritten; keep this idempotent.
+            link_skipped=$((link_skipped + 1))
+            ;;
+        /*)
+            ln -sfn "${ROOTFS_PATH}${target}" "$l" && link_patched=$((link_patched + 1))
+            ;;
+        *)
+            link_skipped=$((link_skipped + 1))
+            ;;
+    esac
+done < <(find "$TREE" -type l -print0 2>/dev/null)
+
+echo "  absolute symlinks repointed: $link_patched"
+echo "  left alone (relative):       $link_skipped"
+
+echo "verification — code-server on PATH should now resolve:"
+ls -l "$TREE/usr/local/bin/code-server" | sed 's/^/    /'
+if [ -e "$TREE/usr/local/bin/code-server" ]; then
+    echo "    target exists relative to the tree: yes"
+else
+    # Expected: the link now points at an absolute on-device path, which does
+    # not resolve here on the build host. Check the real file instead.
+    if [ -f "$TREE/opt/code-server/bin/code-server" ]; then
+        echo "    (dangles on the build host, as intended — resolves once installed)"
+    else
+        echo "ERROR: code-server is missing from the image entirely" >&2
+        exit 1
+    fi
+fi
