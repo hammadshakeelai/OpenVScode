@@ -145,7 +145,9 @@ final class RootfsInstaller {
         cb.onStage("Unpacking Python, C++ and Jupyter…");
         File scratch = new File(dir, "rootfs.incoming");
         deleteTree(scratch);
-        if (!scratch.mkdirs()) {
+        // mkdirs() returns false for a directory that already exists, which is
+        // not an error — only an unusable path is.
+        if (!scratch.isDirectory() && !scratch.mkdirs()) {
             cb.onError("Could not create " + scratch);
             return;
         }
@@ -402,25 +404,44 @@ final class RootfsInstaller {
         }
     }
 
+    /**
+     * Removes a tree, including dangling symlinks.
+     *
+     * The obvious `if (!f.exists()) return` guard is wrong here and cost a
+     * failed install to find. File.exists() follows symlinks, and inside
+     * rootfs.incoming every patched absolute symlink points at the *final*
+     * rootfs path, which does not exist until the rename at the end. So they
+     * all look absent, are never removed, and leave their directories
+     * non-empty — which made any retry after an interrupted install fail
+     * permanently. Deletion is therefore attempted without asking whether the
+     * target resolves.
+     */
     private static void deleteTree(File f) {
-        if (f == null || !f.exists()) return;
-        if (f.isDirectory() && !isSymlink(f)) {
+        if (f == null) return;
+        java.nio.file.Path path = f.toPath();
+
+        boolean link;
+        try {
+            link = Files.isSymbolicLink(path);
+        } catch (Exception e) {
+            link = false;
+        }
+
+        // Recurse into real directories only; never through a symlink.
+        if (!link && Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             File[] kids = f.listFiles();
             if (kids != null) {
-                for (File kid : kids) deleteTree(kid);
+                for (File kid : kids) {
+                    deleteTree(kid);
+                }
             }
         }
-        if (!f.delete()) {
-            Log.d(TAG, "could not delete " + f);
-        }
-    }
 
-    /** Never recurse through a symlink when deleting — the rootfs has many. */
-    private static boolean isSymlink(File f) {
         try {
-            return Files.isSymbolicLink(f.toPath());
+            // Deletes the link itself rather than what it points at.
+            Files.deleteIfExists(path);
         } catch (Exception e) {
-            return false;
+            Log.d(TAG, "could not delete " + f + ": " + e);
         }
     }
 
