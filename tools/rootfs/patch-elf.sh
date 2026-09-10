@@ -78,19 +78,26 @@ while IFS= read -r -d '' f; do
         ld-*.so|ld-*.so.*|ld.so*) skipped=$((skipped + 1)); continue ;;
     esac
 
+    # Only executables, and only their interpreter.
+    #
+    # An earlier version also rewrote RPATH on every ELF, including the 593
+    # shared libraries. That produced an image where bash ran but python3.11,
+    # node and clang all segfaulted before the loader printed a single line of
+    # LD_DEBUG output — i.e. corrupted headers, not a lookup failure. patchelf
+    # 0.18 was doing more surgery than those binaries survived.
+    #
+    # Libraries are now left completely untouched and found through
+    # LD_LIBRARY_PATH, which RootfsLauncher sets and every child inherits. That
+    # cuts the number of modified files from ~981 to ~388 and the edits per
+    # file to one string.
     if readelf -l "$f" 2>/dev/null | grep -q "Requesting program interpreter"; then
-        if patchelf --set-interpreter "$LOADER" --set-rpath "$RPATH" "$f" 2>/dev/null; then
+        if patchelf --set-interpreter "$LOADER" "$f" 2>/dev/null; then
             patched_exec=$((patched_exec + 1))
         else
             skipped=$((skipped + 1))
         fi
     else
-        # Shared library, or a static executable that needs nothing.
-        if patchelf --set-rpath "$RPATH" "$f" 2>/dev/null; then
-            patched_lib=$((patched_lib + 1))
-        else
-            skipped=$((skipped + 1))
-        fi
+        skipped=$((skipped + 1))
     fi
 done < <(find "$TREE" -type f -print0 2>/dev/null)
 
@@ -105,8 +112,8 @@ fi
 
 echo "verification — bash should now request the on-device loader:"
 readelf -l "$TREE/bin/bash" | grep -A1 "Requesting program interpreter" | sed 's/^/    /'
-echo "  and its RPATH:"
-patchelf --print-rpath "$TREE/bin/bash" | sed 's/^/    /'
+echo "  library path the launcher must set:"
+echo "    $RPATH"
 
 # --- shebangs -------------------------------------------------------------
 #
@@ -186,6 +193,41 @@ done < <(find "$TREE" -type l -print0 2>/dev/null)
 
 echo "  absolute symlinks repointed: $link_patched"
 echo "  left alone (relative):       $link_skipped"
+
+# --- does a patched binary still actually run? ----------------------------
+#
+# This is the guard that was missing. patchelf can leave a file that passes
+# every static check and still segfaults the moment it is mapped. The build
+# host cannot exec these directly — their interpreter now points at an Android
+# path — but it can invoke the loader explicitly, which exercises the same
+# headers. If this fails, the image is broken and must not ship.
+if [ "$ARCH" = "amd64" ] && [ "$(uname -m)" = "x86_64" ]; then
+    echo
+    echo "runtime check on patched binaries"
+    LOADER_LOCAL="$TREE/lib/$TRIPLET/$LOADER_NAME"
+    LIBPATH_LOCAL="$TREE/lib/$TRIPLET:$TREE/usr/lib/$TRIPLET:$TREE/lib:$TREE/usr/lib:$TREE/usr/lib/llvm-14/lib:$TREE/opt/code-server/lib"
+
+    check() {
+        name="$1"; shift
+        if out=$("$LOADER_LOCAL" --library-path "$LIBPATH_LOCAL" "$@" 2>&1); then
+            echo "    ok   $name: $(echo "$out" | head -1)"
+        else
+            echo "    FAIL $name: $(echo "$out" | head -2)" >&2
+            return 1
+        fi
+    }
+
+    failed=0
+    check bash       "$TREE/bin/bash" -c 'echo bash ok' || failed=1
+    check python3    "$TREE/usr/bin/python3.11" -c 'print("python ok")' || failed=1
+    check node       "$TREE/opt/code-server/lib/node" --version || failed=1
+    check clang      "$TREE/usr/bin/clang" --version || failed=1
+
+    if [ "$failed" -ne 0 ]; then
+        echo "ERROR: patched binaries do not run. Refusing to publish a broken image." >&2
+        exit 1
+    fi
+fi
 
 echo "verification — code-server on PATH should now resolve:"
 ls -l "$TREE/usr/local/bin/code-server" | sed 's/^/    /'
