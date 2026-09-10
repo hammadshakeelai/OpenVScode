@@ -75,24 +75,43 @@ jobs:
           docker rm "$cid"
           ls -lh dist/
 
+      - name: Measure what is actually large
+        run: |
+          set -e
+          # Guessing at what to trim wastes a 40-minute build per attempt.
+          # Extract the tar and report the real distribution instead.
+          mkdir -p probe
+          tar -xf dist/rootfs-${{ matrix.arch }}.tar -C probe 2>/dev/null || true
+          echo "=== uncompressed total ==="
+          du -sh probe | cut -f1
+          echo "=== 25 largest directories ==="
+          du -h -d 3 probe 2>/dev/null | sort -rh | head -25
+          echo "=== 15 largest single files ==="
+          find probe -type f -printf '%s\t%p\n' 2>/dev/null \
+            | sort -rn | head -15 \
+            | awk '{ printf "%.1f MB\t%s\n", $1/1048576, $2 }'
+          rm -rf probe
+
       - name: Compress
         run: |
           set -e
           cd dist
-          # gzip, not xz: the Android side decompresses with the JDK's built-in
-          # GZIPInputStream, so no decompressor has to ship in the APK. Costs
-          # some size against xz; revisit if the download proves too large.
-          gzip -9 -c rootfs-${{ matrix.arch }}.tar > rootfs-${{ matrix.arch }}.tar.gz
+          # xz, not gzip. At ~400 MB the download dominates the experience, and
+          # xz is worth roughly a third of it. The cost is that the Android side
+          # can no longer lean on the JDK's built-in GZIPInputStream and needs
+          # an xz decoder (org.tukaani:xz) in phase 3 — a fair trade at this size.
+          # -T0 threads it; -9e is the slow-but-smallest preset.
+          xz -9e -T0 -c rootfs-${{ matrix.arch }}.tar > rootfs-${{ matrix.arch }}.tar.xz
           rm rootfs-${{ matrix.arch }}.tar
-          sha256sum rootfs-${{ matrix.arch }}.tar.gz > rootfs-${{ matrix.arch }}.tar.gz.sha256
+          sha256sum rootfs-${{ matrix.arch }}.tar.xz > rootfs-${{ matrix.arch }}.tar.xz.sha256
           ls -lh
-          cat rootfs-${{ matrix.arch }}.tar.gz.sha256
+          cat rootfs-${{ matrix.arch }}.tar.xz.sha256
 
       - name: Report what is inside
         run: |
           set -e
           echo "=== compressed ==="
-          du -h dist/rootfs-${{ matrix.arch }}.tar.gz
+          du -h dist/rootfs-${{ matrix.arch }}.tar.xz
           echo "=== toolchain versions (amd64 only; arm64 cannot run here) ==="
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             docker run --rm --platform ${{ matrix.platform }} \
