@@ -617,7 +617,10 @@ public class MainActivity extends AppCompatActivity {
         statusTitle.setText(R.string.install_running_title);
         statusSubtitle.setText(R.string.install_running_desc);
 
-        RootfsInstaller.install(this, new RootfsInstaller.Progress() {
+        // A test build can point the installer at a local server:
+        //   adb shell am start -n <pkg>/.MainActivity --es rootfs_url http://10.0.2.2:8200
+        String override = getIntent() != null ? getIntent().getStringExtra("rootfs_url") : null;
+        RootfsInstaller.Progress progress = new RootfsInstaller.Progress() {
             @Override
             public void onStage(final String stage) {
                 mainHandler.post(() -> statusTitle.setText(stage));
@@ -660,7 +663,14 @@ public class MainActivity extends AppCompatActivity {
                     refreshInstallButton();
                 });
             }
-        });
+        };
+
+        if (override != null && !override.trim().isEmpty()) {
+            Log.i(TAG, "installing from override URL " + override);
+            RootfsInstaller.install(this, override.trim(), progress);
+        } else {
+            RootfsInstaller.install(this, progress);
+        }
     }
 
     // ---- One-tap provisioning through Termux -----------------------------

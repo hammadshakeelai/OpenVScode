@@ -78,9 +78,18 @@ final class RootfsInstaller {
     }
 
     static void install(final Context ctx, final Progress cb) {
+        install(ctx, BASE_URL, cb);
+    }
+
+    /**
+     * Overridable base URL. Exists so the whole download/verify/extract path can
+     * be exercised against a local server with a small archive, instead of a
+     * 40-minute CI build and a 250 MB download per attempt.
+     */
+    static void install(final Context ctx, final String baseUrl, final Progress cb) {
         new Thread(() -> {
             try {
-                doInstall(ctx, cb);
+                doInstall(ctx, baseUrl, cb);
             } catch (Throwable t) {
                 Log.e(TAG, "install failed", t);
                 cb.onError(t.getClass().getSimpleName() + ": " + t.getMessage());
@@ -88,7 +97,7 @@ final class RootfsInstaller {
         }, "rootfs-installer").start();
     }
 
-    private static void doInstall(Context ctx, Progress cb) throws Exception {
+    private static void doInstall(Context ctx, String baseUrl, Progress cb) throws Exception {
         String arch = archSuffix();
         if (arch == null) {
             cb.onError("No rootfs is published for this device's CPU ("
@@ -102,8 +111,8 @@ final class RootfsInstaller {
         File target = rootfsDir(ctx);
 
         cb.onStage("Checking the published image…");
-        long remoteSize = contentLength(BASE_URL + "/" + name);
-        String expectedSha = fetchSha256(BASE_URL + "/" + name + ".sha256");
+        long remoteSize = contentLength(baseUrl + "/" + name);
+        String expectedSha = fetchSha256(baseUrl + "/" + name + ".sha256");
         Log.i(TAG, "remote=" + remoteSize + " sha=" + expectedSha);
 
         if (remoteSize > 0) {
@@ -118,7 +127,7 @@ final class RootfsInstaller {
         }
 
         cb.onStage("Downloading the IDE image…");
-        download(BASE_URL + "/" + name, archive, remoteSize, cb);
+        download(baseUrl + "/" + name, archive, remoteSize, cb);
 
         cb.onStage("Verifying the download…");
         String actual = sha256(archive);
@@ -265,13 +274,17 @@ final class RootfsInstaller {
              XZCompressorInputStream xz = new XZCompressorInputStream(fin);
              TarArchiveInputStream tar = new TarArchiveInputStream(xz)) {
 
-            String canonicalDest = dest.getCanonicalPath() + File.separator;
+            String canonicalRoot = dest.getCanonicalPath();
+            String canonicalDest = canonicalRoot + File.separator;
             TarArchiveEntry entry;
             while ((entry = tar.getNextEntry()) != null) {
                 File out = new File(dest, entry.getName());
 
-                // Refuse anything that would escape the target directory.
-                if (!out.getCanonicalPath().startsWith(canonicalDest)) {
+                // Refuse anything that would escape the target directory. The
+                // root entry "./" canonicalises to dest itself, which is legal
+                // and must not be caught by the prefix test.
+                String canonicalOut = out.getCanonicalPath();
+                if (!canonicalOut.equals(canonicalRoot) && !canonicalOut.startsWith(canonicalDest)) {
                     Log.w(TAG, "skipping entry outside target: " + entry.getName());
                     continue;
                 }
@@ -294,15 +307,24 @@ final class RootfsInstaller {
                     }
                 } else if (entry.isLink()) {
                     File src = new File(dest, entry.getLinkName());
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                        Log.w(TAG, "could not create parent for link " + out);
+                    }
                     try {
                         Files.deleteIfExists(out.toPath());
                         Files.createLink(out.toPath(), src.toPath());
                     } catch (Exception e) {
-                        // Fall back to a copy; a hard link is an optimisation.
+                        // Measured on API 36: createLink throws here, so this
+                        // fallback is the normal path, not a rare one. A plain
+                        // copy silently drops the mode, which turns a hard-linked
+                        // executable into a non-executable file — and a Debian
+                        // rootfs hard-links a lot of binaries.
                         if (src.isFile()) {
                             copyFile(src, out);
                         }
                     }
+                    applyMode(out, entry.getMode());
                 } else if (entry.isFile()) {
                     File parent = out.getParentFile();
                     if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
