@@ -107,3 +107,47 @@ echo "verification — bash should now request the on-device loader:"
 readelf -l "$TREE/bin/bash" | grep -A1 "Requesting program interpreter" | sed 's/^/    /'
 echo "  and its RPATH:"
 patchelf --print-rpath "$TREE/bin/bash" | sed 's/^/    /'
+
+# --- shebangs -------------------------------------------------------------
+#
+# Patching ELFs is only half of it. Every script in the image starts with an
+# absolute interpreter — #!/bin/sh, #!/usr/bin/python3 — and the kernel resolves
+# that path literally at exec time. On Android none of them exist, so scripts
+# fail exactly like unpatched binaries do. code-server's own launcher is one of
+# these, so without this the IDE never starts.
+#
+# The kernel truncates shebang lines at 127 bytes (BINPRM_BUF_SIZE - 1), so
+# refuse to write one that would be silently cut in half.
+echo
+echo "patching shebangs"
+
+shebang_patched=0
+shebang_toolong=0
+
+while IFS= read -r -d '' f; do
+    # Only look at the first two bytes; most of the tree is not a script.
+    [ "$(head -c 2 "$f" 2>/dev/null)" = '#!' ] || continue
+
+    first=$(head -n 1 "$f" 2>/dev/null) || continue
+    case "$first" in
+        '#!/bin/'*|'#!/usr/bin/'*|'#!/usr/local/bin/'*|'#!/sbin/'*|'#!/usr/sbin/'*) ;;
+        *) continue ;;
+    esac
+
+    new="#!${ROOTFS_PATH}${first#\#!}"
+    if [ "${#new}" -ge 128 ]; then
+        shebang_toolong=$((shebang_toolong + 1))
+        continue
+    fi
+
+    # sed -i rewrites in place; restrict to line 1 so script bodies are untouched.
+    if sed -i "1s|^.*$|${new}|" "$f" 2>/dev/null; then
+        shebang_patched=$((shebang_patched + 1))
+    fi
+done < <(find "$TREE" -type f -print0 2>/dev/null)
+
+echo "  shebangs patched:      $shebang_patched"
+echo "  too long to patch:     $shebang_toolong"
+
+echo "verification — code-server's launcher:"
+head -n 1 "$TREE/opt/code-server/bin/code-server" | sed 's/^/    /'
