@@ -1,76 +1,57 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# OpenVScode Mobile - Server Launcher with Wake-Lock Management
-# ==============================================================================
-set -euo pipefail
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# Starts code-server on 127.0.0.1:8080 and holds a wake lock so Android does not
+# suspend it mid-compile. Idempotent: if a server is already up, it says so and
+# exits rather than starting a second one.
+set -u
 
-PORT="8080"
-BIND_ADDR="127.0.0.1"
-WORKSPACE="${HOME}/OpenVScode_Workspace"
+PORT="${OPENVSCODE_PORT:-8080}"
+WORKSPACE="${OPENVSCODE_WORKSPACE:-$HOME/OpenVScode_Workspace}"
+LOG="$HOME/openvscode-server.log"
+PIDFILE="$HOME/.openvscode.pid"
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --port)
-            PORT="$2"
-            shift 2
-            ;;
-        --lan)
-            BIND_ADDR="0.0.0.0"
-            shift
-            ;;
-        --help|-h)
-            echo "Usage: ./start.sh [--port <port>] [--lan]"
-            echo "  --port <port>  Specify server port (default: 8080)"
-            echo "  --lan          Listen on 0.0.0.0 so other devices on WiFi can connect"
-            exit 0
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
+log()  { printf '\033[1;32m[start]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[start]\033[0m %s\n' "$*" >&2; }
 
-mkdir -p "${WORKSPACE}"
-
-# Acquire Termux wake lock if available to prevent CPU suspension
-if command -v termux-wake-lock >/dev/null 2>&1; then
-    echo ">> Acquiring Termux CPU wake lock..."
-    termux-wake-lock
-fi
-
-# Cleanup handler on exit
-cleanup() {
-    echo ""
-    echo ">> Stopping OpenVScode server..."
-    if command -v termux-wake-unlock >/dev/null 2>&1; then
-        echo ">> Releasing Termux CPU wake lock..."
-        termux-wake-unlock || true
-    fi
-    exit 0
-}
-trap cleanup SIGINT SIGTERM EXIT
-
-# Locate server executable
-SERVER_BIN=""
-if command -v code-server >/dev/null 2>&1; then
-    SERVER_BIN="code-server"
-elif command -v openvscode-server >/dev/null 2>&1; then
-    SERVER_BIN="openvscode-server"
-else
-    echo ">> ERROR: Neither code-server nor openvscode-server was found in PATH."
-    echo ">> Please run './setup.sh' first to install required components."
+if ! command -v code-server >/dev/null 2>&1; then
+    warn "code-server is not installed. Run ./setup.sh first."
     exit 1
 fi
 
-echo "=================================================="
-echo "   ⚡ OpenVScode Mobile IDE Server Starting"
-echo "   Server URL: http://${BIND_ADDR}:${PORT}"
-echo "   Workspace : ${WORKSPACE}"
-echo "=================================================="
+# Already listening? Then there is nothing to do — the app can just connect.
+if command -v curl >/dev/null 2>&1 \
+   && curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT"; then
+    log "A server is already answering on 127.0.0.1:$PORT."
+    log "Open the OpenVScode app — it will connect automatically."
+    exit 0
+fi
 
-# Launch server
-exec "${SERVER_BIN}" \
-    --bind-addr "${BIND_ADDR}:${PORT}" \
+# Keeps the CPU alive so long builds are not killed when the screen turns off.
+termux-wake-lock 2>/dev/null && log "Wake lock acquired." \
+    || warn "termux-wake-lock unavailable (install termux-api) — long builds may be suspended"
+
+mkdir -p "$WORKSPACE"
+
+log "Starting code-server on 127.0.0.1:$PORT…"
+nohup code-server \
+    --bind-addr "127.0.0.1:$PORT" \
     --auth none \
-    "${WORKSPACE}"
+    --disable-telemetry \
+    "$WORKSPACE" >"$LOG" 2>&1 &
+
+echo $! > "$PIDFILE"
+
+# Wait for it to actually answer rather than claiming success immediately.
+for i in $(seq 1 30); do
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT"; then
+        log "IDE is up on http://127.0.0.1:$PORT (pid $(cat "$PIDFILE"))"
+        log "Open the OpenVScode app — it finds this automatically."
+        log "Stop it later with:  kill \$(cat $PIDFILE) && termux-wake-unlock"
+        exit 0
+    fi
+    sleep 1
+done
+
+warn "code-server did not come up within 30s. Last lines of $LOG:"
+tail -20 "$LOG" >&2
+exit 1

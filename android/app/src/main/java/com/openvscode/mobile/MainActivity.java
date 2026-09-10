@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
@@ -97,6 +98,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean loadErrored = false;
     private LinearLayout recentsRow;
     private Button btnScan;
+    private Button btnSetup;
 
     // Runtime permission request for Android 13+ (POST_NOTIFICATIONS)
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -151,9 +153,6 @@ public class MainActivity extends AppCompatActivity {
 
         editServerUrl.setText(currentServerUrl);
         buildServerTools();
-
-        // Request runtime notification permission on Android 13+
-        requestNotificationPermission();
 
         // Setup WebView settings
         initWebView();
@@ -219,6 +218,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void startBackgroundService() {
         if (isServiceStarted) return;
+        // Ask for notification access here rather than at cold start: the prompt
+        // is only meaningful once there is actually a session to show, and at
+        // launch it lands on top of the connect screen before anything happens.
+        requestNotificationPermission();
         Intent serviceIntent = new Intent(this, VScodeService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ContextCompat.startForegroundService(this, serviceIntent);
@@ -503,6 +506,8 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setOnClickListener(v -> scanLanManually());
         serverConfigContainer.addView(btnScan);
 
+        buildSetupButton();
+
         recentsRow = new LinearLayout(this);
         recentsRow.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
@@ -551,6 +556,101 @@ public class MainActivity extends AppCompatActivity {
             startPollingCycle();
         });
         recentsRow.addView(b);
+    }
+
+    // ---- One-tap provisioning through Termux -----------------------------
+    //
+    // Termux exposes a RUN_COMMAND service that other apps may drive, so the
+    // whole Python / C++ / Jupyter install can be kicked off from a button here
+    // instead of the user typing commands. Two things gate it, both one-time:
+    // this app holds com.termux.permission.RUN_COMMAND, and Termux itself needs
+    // allow-external-apps=true in ~/.termux/termux.properties.
+
+    private static final String TERMUX_PKG = "com.termux";
+    private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
+    private static final String TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash";
+    private static final String REPO_URL = "https://github.com/hammadshakeelai/OpenVScode.git";
+
+    /** The whole provision, as one non-interactive shell line. */
+    private static String bootstrapCommand() {
+        return "echo '=== OpenVScode Mobile: setting up your IDE ==='; "
+                + "pkg install -y git >/dev/null 2>&1; "
+                + "cd \"$HOME\" && { [ -d OpenVScode ] || git clone --depth 1 " + REPO_URL + "; } "
+                + "&& cd OpenVScode && git pull -q 2>/dev/null; "
+                + "bash setup.sh && bash start.sh";
+    }
+
+    private boolean isTermuxInstalled() {
+        try {
+            getPackageManager().getPackageInfo(TERMUX_PKG, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Fires the install in a visible Termux session. Deliberately foreground:
+     * the toolchain build takes minutes and the user should see it moving
+     * rather than stare at a spinner wondering whether anything is happening.
+     */
+    private void launchTermuxSetup() {
+        if (!isTermuxInstalled()) {
+            promptInstallTermux();
+            return;
+        }
+        try {
+            Intent intent = new Intent();
+            intent.setClassName(TERMUX_PKG, TERMUX_SERVICE);
+            intent.setAction("com.termux.RUN_COMMAND");
+            intent.putExtra("com.termux.RUN_COMMAND_PATH", TERMUX_BASH);
+            intent.putExtra("com.termux.RUN_COMMAND_ARGUMENTS",
+                    new String[]{"-c", bootstrapCommand()});
+            intent.putExtra("com.termux.RUN_COMMAND_WORKDIR",
+                    "/data/data/com.termux/files/home");
+            intent.putExtra("com.termux.RUN_COMMAND_BACKGROUND", false);
+            intent.putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", "0");
+            startService(intent);
+
+            statusTitle.setText(R.string.setup_running_title);
+            statusSubtitle.setText(R.string.setup_running_desc);
+            Log.i(TAG, "Dispatched setup to Termux");
+        } catch (Exception e) {
+            // Almost always allow-external-apps being unset, which surfaces as a
+            // SecurityException. Say so plainly instead of a generic failure.
+            Log.e(TAG, "Termux RUN_COMMAND rejected", e);
+            statusTitle.setText(R.string.setup_blocked_title);
+            statusSubtitle.setText(R.string.setup_blocked_desc);
+        }
+    }
+
+    private void promptInstallTermux() {
+        statusTitle.setText(R.string.termux_missing_title);
+        statusSubtitle.setText(R.string.termux_missing_desc);
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://f-droid.org/en/packages/com.termux/")));
+        } catch (Exception e) {
+            Log.w(TAG, "Could not open the F-Droid page", e);
+        }
+    }
+
+    /** The provisioning button, shown above the manual address controls. */
+    private void buildSetupButton() {
+        btnSetup = new Button(this);
+        btnSetup.setText(isTermuxInstalled()
+                ? R.string.setup_auto : R.string.setup_install_termux);
+        btnSetup.setAllCaps(false);
+        btnSetup.setTextSize(14f);
+        btnSetup.setTextColor(Color.parseColor("#FFFFFF"));
+        btnSetup.setBackgroundColor(Color.parseColor("#0e8a3e"));
+        btnSetup.setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dpToPx(10);
+        btnSetup.setLayoutParams(lp);
+        btnSetup.setOnClickListener(v -> launchTermuxSetup());
+        serverConfigContainer.addView(btnSetup, 0);
     }
 
     // ---- Local network discovery ----------------------------------------

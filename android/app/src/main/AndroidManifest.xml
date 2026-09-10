@@ -13,6 +13,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Lets the app drive the Termux provisioning script itself.
+         Termux also needs allow-external-apps=true in termux.properties. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- Android 11+ hides other packages unless declared here, so without
+         this the Termux detection always reports "not installed". -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:hardwareAccelerated="true"

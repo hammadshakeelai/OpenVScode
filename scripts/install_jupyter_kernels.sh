@@ -1,33 +1,51 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# OpenVScode Mobile - Dual-Kernel Jupyter Installer (Python 3 & C++ Clang)
-# ==============================================================================
-set -euo pipefail
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# Installs Jupyter with a Python kernel and a C++ kernel.
+#
+# On Android, wheels for the scientific stack usually do not exist, so pip has
+# to build from source. That needs the toolchain step to have run first, and it
+# is why this stage is the slow one.
+set -u
 
-echo "=================================================="
-echo " [OpenVScode] Installing Jupyter Kernels (Python & C++)"
-echo "=================================================="
+log() { printf '\033[1;35m[jupyter]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[jupyter]\033[0m %s\n' "$*" >&2; }
 
-PYTHON_BIN="python3"
-if ! command -v python3 >/dev/null 2>&1 && command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
+if ! command -v pip >/dev/null 2>&1; then
+    warn "pip is missing — run scripts/install_toolchain.sh first. Skipping."
+    exit 0
 fi
 
-echo ">> Installing ipykernel and Jupyter base packages via ${PYTHON_BIN}..."
-${PYTHON_BIN} -m pip install --no-cache-dir ipykernel jupyter_client || true
+# Build flags that let native extensions compile against Termux's headers.
+export CFLAGS="${CFLAGS:-} -Wno-error=implicit-function-declaration"
+export LDFLAGS="${LDFLAGS:-} -L${PREFIX:-/data/data/com.termux/files/usr}/lib"
 
-echo ">> Registering Python 3 kernel spec..."
-${PYTHON_BIN} -m ipykernel install --user --name python3 --display-name "Python 3 (OpenVScode Mobile)" || true
+log "Upgrading pip tooling…"
+pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || warn "pip self-upgrade failed; continuing"
 
-echo ">> Installing C++ Jupyter kernel (jupyter-cpp-kernel)..."
-${PYTHON_BIN} -m pip install --no-cache-dir jupyter-cpp-kernel || true
-
-if command -v jupyter-cpp-kernel >/dev/null 2>&1; then
-    echo ">> Registering C++ Clang kernel spec..."
-    jupyter-cpp-kernel --install --user || true
+log "Installing Jupyter + Python kernel (this is the slow part — several minutes)…"
+if pip install --no-input jupyterlab notebook ipykernel >/dev/null 2>&1; then
+    python3 -m ipykernel install --user --name python3 --display-name "Python 3 (Termux)" >/dev/null 2>&1 \
+        && log "Python kernel registered."
+else
+    warn "JupyterLab install failed. Trying a minimal notebook + ipykernel install…"
+    if pip install --no-input notebook ipykernel >/dev/null 2>&1; then
+        python3 -m ipykernel install --user --name python3 --display-name "Python 3 (Termux)" >/dev/null 2>&1
+        log "Minimal Jupyter installed."
+    else
+        warn "Could not install Jupyter. Python and C++ still work in the editor."
+    fi
 fi
 
-echo ">> Installed Jupyter kernels list:"
-${PYTHON_BIN} -m jupyter_client.kernelspec list || true
+log "Installing the C++ kernel…"
+if pip install --no-input jupyter-cpp-kernel >/dev/null 2>&1; then
+    python3 -m jupyter_cpp_kernel.install >/dev/null 2>&1 \
+        && log "C++ kernel registered." \
+        || warn "C++ kernel installed but did not register; select it manually if missing"
+else
+    warn "jupyter-cpp-kernel unavailable. C++ still compiles from the terminal with clang++."
+fi
 
-echo ">> Jupyter kernel installation completed!"
+log "Kernels currently registered:"
+jupyter kernelspec list 2>/dev/null | sed 's/^/  /' || warn "jupyter not on PATH; skipping kernel listing"
+
+log "Jupyter step complete."

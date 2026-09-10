@@ -21,4 +21,14 @@
     <string name="scan_connecting">Found %1$s — connecting…</string>
     <string name="scan_other">Other servers (may not be an IDE)</string>
     <string name="recent_label">Recent</string>
+    <string name="setup_auto">Set up Python, C++ &amp; Jupyter automatically</string>
+    <string name="setup_install_termux">Install Termux to set up automatically</string>
+    <string name="setup_running_title">Setting up your IDE…</string>
+    <string name="setup_running_desc">Termux is installing Python, Clang and Jupyter. This takes several minutes — leave it running, then come back here.</string>
+    <string name="setup_blocked_title">Termux blocked the request</string>
+    <string name="setup_blocked_desc">Open Termux and run this one line, restart Termux, then tap the button again:
+
+echo \"allow-external-apps = true\" &gt;&gt; ~/.termux/termux.properties</string>
+    <string name="termux_missing_title">Termux is required</string>
+    <string name="termux_missing_desc">Install Termux from F-Droid (not the Play Store build — it is abandoned), then come back and tap the button again.</string>
 </resources>
