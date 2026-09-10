@@ -136,6 +136,11 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/rootfs-v') && github.ref_name || 'rootfs-latest' }}
           files: dist/*
           fail_on_unmatched_files: true
+          # Must stay a prerelease. GitHub points /releases/latest at the newest
+          # non-prerelease, so publishing this as a normal release silently
+          # hijacked the README's APK download link and made it 404 — these
+          # rootfs releases carry no APK.
+          prerelease: true
           body: |
             Linux rootfs images the OpenVScode Mobile app downloads on first launch.
 
