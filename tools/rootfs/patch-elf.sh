@@ -99,8 +99,13 @@ while IFS= read -r -d '' f; do
         # python3.11 and clang badly enough that they segfaulted before the
         # loader printed anything. The runtime check at the end of this script
         # is what decides whether this is safe — not this comment.
-        if patchelf --set-interpreter "$LOADER" "$f" 2>/dev/null \
-           && patchelf --set-rpath "$RPATH" "$f" 2>/dev/null; then
+        # Interpreter only. Setting RPATH as well corrupts python3.11, node and
+        # clang — the runtime check below caught bash passing while all three
+        # failed, both when combined with --set-interpreter and as a separate
+        # invocation. Library lookup is handled by the launcher instead, through
+        # a bionic shell wrapper that scopes LD_LIBRARY_PATH to the glibc
+        # process tree rather than letting it reach Android's own binaries.
+        if patchelf --set-interpreter "$LOADER" "$f" 2>/dev/null; then
             patched_exec=$((patched_exec + 1))
         else
             skipped=$((skipped + 1))

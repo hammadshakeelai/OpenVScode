@@ -89,7 +89,24 @@ final class RootfsLauncher {
             Log.w(TAG, "could not create " + home);
         }
 
-        ProcessBuilder pb = new ProcessBuilder(launcher.getAbsolutePath());
+        // Launch through Android's own shell rather than exec'ing start-ide
+        // directly.
+        //
+        // The glibc binaries need LD_LIBRARY_PATH — RPATH cannot be used,
+        // because patchelf corrupts python3.11, node and clang when it writes
+        // one. But putting LD_LIBRARY_PATH in this process's environment kills
+        // every bionic binary the app launches: Android's linker honours it too,
+        // and the rootfs holds a file named libc.so that is a GNU ld script, so
+        // exec fails with "bad ELF magic: 2f2a2047" before any script runs.
+        //
+        // A bionic shell starts clean, sets the variable, and then execs into
+        // the glibc world — so the variable exists exactly where it is needed
+        // and nowhere else.
+        String libraryPath = glibcLibraryPath(root);
+        ProcessBuilder pb = new ProcessBuilder(
+                "/system/bin/sh", "-c",
+                "export LD_LIBRARY_PATH=" + shellQuote(libraryPath) + "; "
+                        + "exec " + shellQuote(launcher.getAbsolutePath()));
         pb.directory(home);
         pb.redirectErrorStream(true);
         pb.redirectOutput(ProcessBuilder.Redirect.appendTo(new File(home, "ide.log")));
@@ -144,6 +161,36 @@ final class RootfsLauncher {
         env.put("OPENVSCODE_PORT", "8080");
         env.put("OPENVSCODE_WORKSPACE", home + "/workspace");
         return env;
+    }
+
+    /** Where the image's glibc libraries live, most specific first. */
+    static String glibcLibraryPath(String root) {
+        String triplet = isArm64() ? "aarch64-linux-gnu" : "x86_64-linux-gnu";
+        return root + "/lib/" + triplet
+                + ":" + root + "/usr/lib/" + triplet
+                + ":" + root + "/lib"
+                + ":" + root + "/usr/lib"
+                + ":" + root + "/usr/local/lib"
+                + ":" + root + "/usr/lib/llvm-14/lib"
+                + ":" + root + "/opt/code-server/lib";
+    }
+
+    /** Decides the library triplet; the first listed ABI is the real one. */
+    private static boolean isArm64() {
+        for (String abi : android.os.Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equals(abi)) {
+                return true;
+            }
+            if ("x86_64".equals(abi)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Single-quotes a path for /bin/sh; these are app-internal, but cheap. */
+    private static String shellQuote(String s) {
+        return "'" + s.replace("'", "'\\''") + "'";
     }
 
     static synchronized void stop() {
