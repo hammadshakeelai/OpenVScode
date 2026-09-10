@@ -33,15 +33,32 @@ import androidx.core.view.WindowInsetsCompat;
 import android.view.ViewGroup;
 
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private static final String PREFS_NAME = "openvscode_prefs";
     private static final String KEY_SERVER_URL = "server_url";
+    private static final String KEY_RECENTS = "recent_servers";
+    private static final int MAX_RECENTS = 6;
+    /** Ports worth probing when scanning the local network for an IDE. */
+    private static final int[] SCAN_PORTS = {8080, 8100, 3000, 8000, 8443, 9000, 4444};
     public static final String DEFAULT_SERVER_URL = "http://127.0.0.1:8080";
 
     private String currentServerUrl;
@@ -68,6 +85,10 @@ public class MainActivity extends AppCompatActivity {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private boolean isServerReady = false;
     private boolean isServiceStarted = false;
+    private boolean awaitingFirstLoad = false;
+    private boolean loadErrored = false;
+    private LinearLayout recentsRow;
+    private Button btnScan;
 
     // Runtime permission request for Android 13+ (POST_NOTIFICATIONS)
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -121,6 +142,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         editServerUrl.setText(currentServerUrl);
+        buildServerTools();
 
         // Request runtime notification permission on Android 13+
         requestNotificationPermission();
@@ -135,12 +157,9 @@ public class MainActivity extends AppCompatActivity {
         btnConnect.setOnClickListener(v -> {
             String inputUrl = editServerUrl.getText().toString().trim();
             if (!inputUrl.isEmpty()) {
-                if (!inputUrl.startsWith("http://") && !inputUrl.startsWith("https://")) {
-                    inputUrl = "http://" + inputUrl;
-                }
-                if (inputUrl.endsWith("/")) {
-                    inputUrl = inputUrl.substring(0, inputUrl.length() - 1);
-                }
+                // Stored raw on purpose. candidateUrls() settles the scheme and strips
+                // noise at connect time, so "192.168.1.5:8100", "my-box.local:3000" and
+                // "https://abc.ngrok.io/?tkn=x" are all valid things to type here.
                 currentServerUrl = inputUrl;
                 prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
                 startPollingCycle();
@@ -234,21 +253,32 @@ public class MainActivity extends AppCompatActivity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 Log.i(TAG, "WebView onPageFinished: " + url + " | currentServerUrl=" + currentServerUrl);
-                if (url != null && isMatchingServer(url, currentServerUrl)) {
-                    Log.i(TAG, "Server matched! Dismissing loadingOverlay.");
+                boolean matched = url != null && isMatchingServer(url, currentServerUrl);
+                // A server may redirect anywhere it likes: an https upgrade, an SSO hop,
+                // a tunnel hostname. Demanding host+port equality strands the user on the
+                // overlay with a fully loaded IDE behind it, so also accept the first
+                // clean load of a navigation we started ourselves.
+                boolean firstLoadOk = awaitingFirstLoad && !loadErrored
+                        && url != null && !url.startsWith("about:");
+                if (matched || firstLoadOk) {
+                    awaitingFirstLoad = false;
+                    Log.i(TAG, "Dismissing overlay (matched=" + matched + " firstLoadOk=" + firstLoadOk + ")");
                     loadingOverlay.animate().alpha(0f).setDuration(300).withEndAction(() -> {
                         loadingOverlay.setVisibility(View.GONE);
                     });
                     // Start background wake lock service only after server actually loads
                     startBackgroundService();
                 } else {
-                    Log.w(TAG, "onPageFinished url did not match: url=" + url + " server=" + currentServerUrl);
+                    Log.w(TAG, "onPageFinished did not dismiss overlay: url=" + url + " server=" + currentServerUrl);
                 }
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 super.onReceivedError(view, request, error);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && request != null && request.isForMainFrame()) {
+                    loadErrored = true;
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     Log.e(TAG, "WebView onReceivedError: " + error.getDescription() + " code=" + error.getErrorCode() + " url=" + request.getUrl());
                 }
@@ -256,7 +286,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private boolean isMatchingServer(String pageUrl, String serverUrl) {
+    static boolean isMatchingServer(String pageUrl, String serverUrl) {
         if (pageUrl == null || serverUrl == null) return false;
         if (pageUrl.startsWith(serverUrl)) return true;
         try {
@@ -290,29 +320,44 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
 
-                try {
-                    HttpURLConnection conn = (HttpURLConnection) new URL(currentServerUrl).openConnection();
-                    conn.setConnectTimeout(1500);
-                    conn.setReadTimeout(1500);
-                    conn.setRequestMethod("GET");
-                    int code = conn.getResponseCode();
-                    conn.disconnect();
+                for (String candidate : candidateUrls(currentServerUrl)) {
+                    try {
+                        HttpURLConnection conn = (HttpURLConnection) new URL(candidate).openConnection();
+                        conn.setConnectTimeout(4000);
+                        conn.setReadTimeout(4000);
+                        conn.setInstanceFollowRedirects(true);
+                        conn.setRequestMethod("GET");
+                        final int code = conn.getResponseCode();
+                        conn.disconnect();
 
-                    if (code == 200 || code == 302 || code == 401 || code == 403) {
-                        isServerReady = true;
-                        mainHandler.post(() -> {
-                            Log.i(TAG, "Server reached. Loading into WebView: " + currentServerUrl);
-                            webView.loadUrl(currentServerUrl);
-                        });
-                        return;
+                        // ANY http status means something is listening and speaking HTTP.
+                        // A whitelist of "good" codes strands the user on real servers:
+                        // `code serve-web` answers 202 while it unpacks itself, proxies
+                        // answer 204/418, a booting IDE answers 502/503.
+                        if (code > 0) {
+                            isServerReady = true;
+                            final String winner = candidate;
+                            mainHandler.post(() -> {
+                                currentServerUrl = winner;
+                                prefs.edit().putString(KEY_SERVER_URL, winner).apply();
+                                rememberServer(winner);
+                                editServerUrl.setText(winner);
+                                Log.i(TAG, "Server reached (HTTP " + code + "). Loading: " + winner);
+                                awaitingFirstLoad = true;
+                                loadErrored = false;
+                                webView.loadUrl(winner);
+                            });
+                            return;
+                        }
+                    } catch (Exception e) {
+                        lastError = e.getClass().getSimpleName() + ": "
+                                + (e.getMessage() != null ? e.getMessage() : "unreachable");
+                        Log.w(TAG, "Attempt " + currentAttempt + " -> " + candidate + " failed: " + lastError);
                     }
-                } catch (Exception e) {
-                    lastError = e.getClass().getSimpleName() + ": " + (e.getMessage() != null ? e.getMessage() : "Connection refused");
-                    Log.w(TAG, "Connection attempt " + currentAttempt + " to " + currentServerUrl + " failed: " + lastError);
                 }
 
                 try {
-                    Thread.sleep(1200);
+                    Thread.sleep(900);
                 } catch (InterruptedException e) {
                     break;
                 }
@@ -329,6 +374,262 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    // ---- Address handling ------------------------------------------------
+    //
+    // The app should reach whatever the user can reach: a server on the phone
+    // itself, a laptop on the same Wi-Fi, a box addressed by hostname, or an
+    // https tunnel on the public internet. Nothing below assumes an address.
+
+    /**
+     * Expands loose input into an ordered list of URLs to try.
+     * Accepts "192.168.1.5:8100", "localhost:8080", "my-box.local",
+     * "https://abc.ngrok.io", "10.0.0.4:8443/?tkn=secret".
+     * An explicit scheme is honoured as typed; without one, local addresses are
+     * tried over http first and public ones over https first.
+     */
+    static List<String> candidateUrls(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) return out;
+        String s = raw.trim().replaceAll("\\s+", "");
+        if (s.isEmpty()) return out;
+
+        String scheme = null;
+        int sep = s.indexOf("://");
+        if (sep > 0) {
+            scheme = s.substring(0, sep).toLowerCase(Locale.ROOT);
+            s = s.substring(sep + 3);
+        }
+        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
+        if (s.isEmpty()) return out;
+
+        if (scheme != null) {
+            out.add(scheme + "://" + s);
+            return out;
+        }
+        if (isLocalAddress(hostOf(s))) {
+            out.add("http://" + s);
+            out.add("https://" + s);
+        } else {
+            out.add("https://" + s);
+            out.add("http://" + s);
+        }
+        return out;
+    }
+
+    /** Host portion of an authority such as "1.2.3.4:8100/path?q=1". */
+    static String hostOf(String authority) {
+        if (authority == null) return "";
+        String h = authority;
+        int cut = h.indexOf('/');
+        if (cut >= 0) h = h.substring(0, cut);
+        cut = h.indexOf('?');
+        if (cut >= 0) h = h.substring(0, cut);
+        int at = h.lastIndexOf('@');
+        if (at >= 0) h = h.substring(at + 1);
+        if (h.startsWith("[")) {                     // IPv6 literal
+            int end = h.indexOf(']');
+            return end > 0 ? h.substring(0, end + 1) : h;
+        }
+        cut = h.indexOf(':');
+        if (cut >= 0) h = h.substring(0, cut);
+        return h;
+    }
+
+    /** Loopback, RFC1918, link-local, mDNS name, or a bare hostname. */
+    static boolean isLocalAddress(String host) {
+        if (host == null || host.isEmpty()) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        if (h.equals("localhost") || h.equals("::1") || h.equals("[::1]")) return true;
+        if (h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home")) return true;
+        if (h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.")) return true;
+        if (h.startsWith("169.254.")) return true;
+        if (h.startsWith("172.")) {
+            String[] parts = h.split("\\.");
+            if (parts.length > 1) {
+                try {
+                    int second = Integer.parseInt(parts[1]);
+                    if (second >= 16 && second <= 31) return true;
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        return !h.contains(".");                     // bare LAN hostname
+    }
+
+    // ---- Recent servers --------------------------------------------------
+
+    private void rememberServer(String url) {
+        Set<String> seen = new LinkedHashSet<>();
+        seen.add(url);
+        seen.addAll(recentServers());
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (String s : seen) {
+            if (n++ >= MAX_RECENTS) break;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(s);
+        }
+        prefs.edit().putString(KEY_RECENTS, sb.toString()).apply();
+        mainHandler.post(this::renderRecents);
+    }
+
+    private List<String> recentServers() {
+        List<String> out = new ArrayList<>();
+        for (String s : prefs.getString(KEY_RECENTS, "").split("\n")) {
+            if (!s.trim().isEmpty()) out.add(s.trim());
+        }
+        return out;
+    }
+
+    /** Adds the scan button and the recents strip under the address box. */
+    private void buildServerTools() {
+        btnScan = new Button(this);
+        btnScan.setText(R.string.scan_wifi);
+        btnScan.setAllCaps(false);
+        btnScan.setTextSize(13f);
+        btnScan.setBackgroundColor(Color.parseColor("#333333"));
+        btnScan.setTextColor(Color.parseColor("#CCCCCC"));
+        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        scanParams.topMargin = dpToPx(10);
+        btnScan.setLayoutParams(scanParams);
+        btnScan.setOnClickListener(v -> scanLan());
+        serverConfigContainer.addView(btnScan);
+
+        recentsRow = new LinearLayout(this);
+        recentsRow.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowParams.topMargin = dpToPx(8);
+        recentsRow.setLayoutParams(rowParams);
+        serverConfigContainer.addView(recentsRow);
+
+        renderRecents();
+    }
+
+    private void renderRecents() {
+        if (recentsRow == null) return;
+        recentsRow.removeAllViews();
+        List<String> recents = recentServers();
+        if (recents.isEmpty()) return;
+        addRowLabel(getString(R.string.recent_label));
+        for (String url : recents) addServerChoice(url);
+    }
+
+    private void addRowLabel(String text) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setTextSize(12f);
+        label.setTextColor(Color.parseColor("#888888"));
+        label.setPadding(0, dpToPx(6), 0, dpToPx(2));
+        recentsRow.addView(label);
+    }
+
+    /** One tappable address under the input box. */
+    private void addServerChoice(final String url) {
+        Button b = new Button(this);
+        b.setText(url);
+        b.setAllCaps(false);
+        b.setTextSize(12f);
+        b.setTextColor(Color.parseColor("#CCCCCC"));
+        b.setBackgroundColor(Color.parseColor("#2a2a2a"));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dpToPx(4);
+        b.setLayoutParams(lp);
+        b.setOnClickListener(v -> {
+            editServerUrl.setText(url);
+            currentServerUrl = url;
+            prefs.edit().putString(KEY_SERVER_URL, url).apply();
+            startPollingCycle();
+        });
+        recentsRow.addView(b);
+    }
+
+    // ---- Local network discovery ----------------------------------------
+
+    /** "192.168.18." for a device at 192.168.18.56, or null when off-LAN. */
+    static String subnetPrefixOf(String ipv4) {
+        if (ipv4 == null) return null;
+        int dot = ipv4.lastIndexOf('.');
+        return dot > 0 ? ipv4.substring(0, dot + 1) : null;
+    }
+
+    private String localIpv4() {
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            while (ifaces != null && ifaces.hasMoreElements()) {
+                NetworkInterface nif = ifaces.nextElement();
+                if (!nif.isUp() || nif.isLoopback()) continue;
+                Enumeration<InetAddress> addrs = nif.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address && addr.isSiteLocalAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not determine local IPv4", e);
+        }
+        return null;
+    }
+
+    /**
+     * Sweeps this device's own /24 for anything listening on a likely IDE port.
+     * Short timeouts and wide fan-out, so the sweep finishes in seconds.
+     */
+    private void scanLan() {
+        final String prefix = subnetPrefixOf(localIpv4());
+        if (prefix == null) {
+            statusSubtitle.setText(R.string.scan_no_wifi);
+            return;
+        }
+        btnScan.setEnabled(false);
+        btnScan.setText(R.string.scan_running);
+
+        final Set<String> found = Collections.synchronizedSet(new LinkedHashSet<String>());
+        final AtomicInteger remaining = new AtomicInteger(254 * SCAN_PORTS.length);
+        final ExecutorService pool = Executors.newFixedThreadPool(48);
+
+        for (int i = 1; i <= 254; i++) {
+            final String host = prefix + i;
+            for (final int port : SCAN_PORTS) {
+                pool.execute(() -> {
+                    Socket sock = new Socket();
+                    try {
+                        sock.connect(new InetSocketAddress(host, port), 400);
+                        found.add("http://" + host + ":" + port);
+                    } catch (Exception ignored) {
+                        // host is silent on this port
+                    } finally {
+                        try { sock.close(); } catch (Exception ignored) { }
+                        if (remaining.decrementAndGet() == 0) {
+                            mainHandler.post(() -> finishScan(found));
+                        }
+                    }
+                });
+            }
+        }
+        pool.shutdown();
+    }
+
+    private void finishScan(Set<String> found) {
+        btnScan.setEnabled(true);
+        btnScan.setText(R.string.scan_wifi);
+        if (recentsRow == null) return;
+        recentsRow.removeAllViews();
+        if (found.isEmpty()) {
+            statusSubtitle.setText(R.string.scan_none);
+            renderRecents();
+            return;
+        }
+        addRowLabel(getString(R.string.scan_found, found.size()));
+        for (String url : found) addServerChoice(url);
+        for (String url : recentServers()) {
+            if (!found.contains(url)) addServerChoice(url);
+        }
     }
 
     private void setupKeybar() {
