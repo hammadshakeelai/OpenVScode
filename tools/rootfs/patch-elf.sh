@@ -78,20 +78,29 @@ while IFS= read -r -d '' f; do
         ld-*.so|ld-*.so.*|ld.so*) skipped=$((skipped + 1)); continue ;;
     esac
 
-    # Only executables, and only their interpreter.
+    # Executables only — libraries are never touched.
     #
-    # An earlier version also rewrote RPATH on every ELF, including the 593
-    # shared libraries. That produced an image where bash ran but python3.11,
-    # node and clang all segfaulted before the loader printed a single line of
-    # LD_DEBUG output — i.e. corrupted headers, not a lookup failure. patchelf
-    # 0.18 was doing more surgery than those binaries survived.
+    # Two earlier attempts failed differently and both are worth remembering.
+    # Patching every ELF, interpreter and RPATH together, corrupted node,
+    # python3.11 and clang: they segfaulted before the loader emitted a single
+    # line of LD_DEBUG output. Dropping RPATH entirely and passing
+    # LD_LIBRARY_PATH from the launcher instead fixed that, but broke something
+    # else — Android's own linker honours LD_LIBRARY_PATH too, and this
+    # directory contains a file named libc.so that is a GNU ld script rather
+    # than an ELF, so every bionic binary launched from the app died with
+    #   CANNOT LINK EXECUTABLE "/system/bin/sh": ... bad ELF magic: 2f2a2047
+    # at exec time, before any script could unset it.
     #
-    # Libraries are now left completely untouched and found through
-    # LD_LIBRARY_PATH, which RootfsLauncher sets and every child inherits. That
-    # cuts the number of modified files from ~981 to ~388 and the edits per
-    # file to one string.
+    # RPATH is the right place for this: it travels with the binary that needs
+    # it and is invisible to everything else.
     if readelf -l "$f" 2>/dev/null | grep -q "Requesting program interpreter"; then
-        if patchelf --set-interpreter "$LOADER" "$f" 2>/dev/null; then
+        # Interpreter and RPATH are set in SEPARATE invocations. Doing both at
+        # once, across executables *and* libraries, is what corrupted node,
+        # python3.11 and clang badly enough that they segfaulted before the
+        # loader printed anything. The runtime check at the end of this script
+        # is what decides whether this is safe — not this comment.
+        if patchelf --set-interpreter "$LOADER" "$f" 2>/dev/null \
+           && patchelf --set-rpath "$RPATH" "$f" 2>/dev/null; then
             patched_exec=$((patched_exec + 1))
         else
             skipped=$((skipped + 1))

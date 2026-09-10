@@ -99,7 +99,23 @@ final class RootfsLauncher {
         env.putAll(baseEnvironment(root, home.getAbsolutePath()));
 
         Log.i(TAG, "starting " + launcher);
+        Log.i(TAG, "  HOME=" + env.get("HOME"));
         running = pb.start();
+
+        // Report how it ends. Without this a process that dies immediately is
+        // indistinguishable from one that started fine, which cost real time:
+        // the log file was created and stayed empty, and nothing said why.
+        final Process p = running;
+        new Thread(() -> {
+            try {
+                int rc = p.waitFor();
+                Log.w(TAG, "IDE process exited with code " + rc
+                        + (rc == 139 ? " (SIGSEGV)" : rc == 127 ? " (command not found)"
+                        : rc == 126 ? " (not executable)" : ""));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "ide-watch").start();
     }
 
     /** The environment a Debian userland expects, pointed at the install path. */
@@ -109,20 +125,13 @@ final class RootfsLauncher {
         env.put("PATH", root + "/usr/local/sbin:" + root + "/usr/local/bin:"
                 + root + "/usr/sbin:" + root + "/usr/bin:"
                 + root + "/sbin:" + root + "/bin");
-        // The image is patched to fix each executable's ELF interpreter, but
-        // deliberately NOT its RPATH: rewriting RPATH across every shared
-        // library left python3.11, node and clang segfaulting before the loader
-        // produced a single line of output. Library lookup lives here instead,
-        // and children inherit it for free.
-        String triplet = is64BitArm() ? "aarch64-linux-gnu" : "x86_64-linux-gnu";
-        env.put("LD_LIBRARY_PATH",
-                root + "/lib/" + triplet + ":"
-                        + root + "/usr/lib/" + triplet + ":"
-                        + root + "/lib:"
-                        + root + "/usr/lib:"
-                        + root + "/usr/local/lib:"
-                        + root + "/usr/lib/llvm-14/lib:"
-                        + root + "/opt/code-server/lib");
+        // Deliberately NO LD_LIBRARY_PATH. Android's linker honours it too, and
+        // the rootfs lib directory holds a file named libc.so that is a GNU ld
+        // script rather than an ELF — so setting it here killed every bionic
+        // binary the app launched, at exec time, with
+        //   CANNOT LINK EXECUTABLE "/system/bin/sh": ... bad ELF magic: 2f2a2047
+        // Library lookup belongs in each binary's RPATH, which the image build
+        // sets and which nothing else can see.
         env.put("TMPDIR", root + "/tmp");
         env.put("SHELL", root + "/bin/bash");
         env.put("USER", "root");
@@ -135,19 +144,6 @@ final class RootfsLauncher {
         env.put("OPENVSCODE_PORT", "8080");
         env.put("OPENVSCODE_WORKSPACE", home + "/workspace");
         return env;
-    }
-
-    /** Which rootfs image this device needs; decides the library triplet. */
-    private static boolean is64BitArm() {
-        for (String abi : android.os.Build.SUPPORTED_ABIS) {
-            if ("arm64-v8a".equals(abi)) {
-                return true;
-            }
-            if ("x86_64".equals(abi)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     static synchronized void stop() {
