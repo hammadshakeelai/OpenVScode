@@ -16,5 +16,9 @@
     <string name="scan_no_wifi">Not on a local network — enter an address instead.</string>
     <string name="scan_none">No IDE server found on this network.</string>
     <string name="scan_found">Found %1$d — tap to connect</string>
+    <string name="scan_title">Looking for a server…</string>
+    <string name="scan_probing">Checking %1$d address(es)…</string>
+    <string name="scan_connecting">Found %1$s — connecting…</string>
+    <string name="scan_other">Other servers (may not be an IDE)</string>
     <string name="recent_label">Recent</string>
 </resources>

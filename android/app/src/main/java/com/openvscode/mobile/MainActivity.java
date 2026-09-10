@@ -32,6 +32,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import android.view.ViewGroup;
 
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -59,6 +60,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int MAX_RECENTS = 6;
     /** Ports worth probing when scanning the local network for an IDE. */
     private static final int[] SCAN_PORTS = {8080, 8100, 3000, 8000, 8443, 9000, 4444};
+    /** probeServer() verdicts. */
+    private static final int PROBE_NONE = 0;
+    private static final int PROBE_HTTP = 1;
+    private static final int PROBE_IDE = 2;
     public static final String DEFAULT_SERVER_URL = "http://127.0.0.1:8080";
 
     private String currentServerUrl;
@@ -86,6 +91,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean isServerReady = false;
     private boolean isServiceStarted = false;
     private boolean awaitingFirstLoad = false;
+    private boolean autoDiscoveryDone = false;
+    private boolean autoConnectUsed = false;
+    private String pendingError = null;
     private boolean loadErrored = false;
     private LinearLayout recentsRow;
     private Button btnScan;
@@ -205,6 +213,7 @@ public class MainActivity extends AppCompatActivity {
         statusTitle.setText(R.string.server_starting);
         statusSubtitle.setText(getString(R.string.server_loading_sub, currentServerUrl));
         isServerReady = false;
+        autoDiscoveryDone = false;
         pollServerReadiness();
     }
 
@@ -311,12 +320,12 @@ public class MainActivity extends AppCompatActivity {
         executor.execute(() -> {
             int attempts = 0;
             String lastError = "Connection refused";
-            while (!isServerReady && attempts < 15) {
+            while (!isServerReady && attempts < 8) {
                 attempts++;
                 final int currentAttempt = attempts;
                 mainHandler.post(() -> {
                     if (!isServerReady) {
-                        statusSubtitle.setText("Attempt " + currentAttempt + "/15 — Connecting to " + currentServerUrl);
+                        statusSubtitle.setText("Attempt " + currentAttempt + "/8 — Connecting to " + currentServerUrl);
                     }
                 });
 
@@ -365,13 +374,9 @@ public class MainActivity extends AppCompatActivity {
 
             if (!isServerReady) {
                 final String finalError = lastError;
-                mainHandler.post(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    statusTitle.setText(R.string.server_not_found_title);
-                    statusSubtitle.setText(getString(R.string.server_not_found_desc, currentServerUrl, finalError));
-                    serverConfigContainer.setVisibility(View.VISIBLE);
-                    editServerUrl.setText(currentServerUrl);
-                });
+                // Do not dead-end on a form. Sweep the network first and, on the
+                // first failure of a launch, connect to what we find.
+                mainHandler.post(() -> beginAutoDiscovery(finalError));
             }
         });
     }
@@ -490,11 +495,12 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setTextSize(13f);
         btnScan.setBackgroundColor(Color.parseColor("#333333"));
         btnScan.setTextColor(Color.parseColor("#CCCCCC"));
+        btnScan.setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8));
         LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         scanParams.topMargin = dpToPx(10);
         btnScan.setLayoutParams(scanParams);
-        btnScan.setOnClickListener(v -> scanLan());
+        btnScan.setOnClickListener(v -> scanLanManually());
         serverConfigContainer.addView(btnScan);
 
         recentsRow = new LinearLayout(this);
@@ -577,19 +583,99 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Sweeps this device's own /24 for anything listening on a likely IDE port.
-     * Short timeouts and wide fan-out, so the sweep finishes in seconds.
+     * Classifies what is answering at a URL.
+     *
+     * An open TCP port is not enough to connect to blindly — a home network is
+     * full of routers on 8080 and printers on 9000, and this phone's own subnet
+     * has an Apache install sitting on 8080 right next to the IDE. So fetch the
+     * root and look for something that identifies a code editor before treating
+     * a hit as somewhere worth sending the user.
      */
-    private void scanLan() {
-        final String prefix = subnetPrefixOf(localIpv4());
+    private static int probeServer(String url, int timeoutMs) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            if (code <= 0) return PROBE_NONE;
+
+            StringBuilder body = new StringBuilder();
+            InputStream in = null;
+            try {
+                in = (code >= 400) ? conn.getErrorStream() : conn.getInputStream();
+                if (in != null) {
+                    byte[] buf = new byte[8192];
+                    int n, total = 0;
+                    while (total < 65536 && (n = in.read(buf)) > 0) {
+                        body.append(new String(buf, 0, n, "UTF-8"));
+                        total += n;
+                    }
+                }
+            } catch (Exception ignored) {
+                // headers were enough to prove HTTP; body is a bonus
+            } finally {
+                if (in != null) try { in.close(); } catch (Exception ignored) { }
+            }
+
+            String text = body.toString().toLowerCase(Locale.ROOT);
+            if (text.contains("vscode") || text.contains("code-server")
+                    || text.contains("workbench") || text.contains("openvscode")) {
+                return PROBE_IDE;
+            }
+            return PROBE_HTTP;
+        } catch (Exception e) {
+            return PROBE_NONE;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * Runs after the configured address fails. Sweeps this device's own /24 for
+     * open IDE-ish ports, confirms over HTTP which are really editors, and — on
+     * the first failure of a launch — connects to one without being asked.
+     */
+    private void beginAutoDiscovery(String lastError) {
+        if (autoDiscoveryDone) {
+            showManualEntry(lastError);
+            return;
+        }
+        autoDiscoveryDone = true;
+        pendingError = lastError;
+
+        String prefix = subnetPrefixOf(localIpv4());
+        if (prefix == null) {
+            showManualEntry(lastError);
+            return;
+        }
+        progressBar.setVisibility(View.VISIBLE);
+        statusTitle.setText(R.string.scan_title);
+        statusSubtitle.setText(R.string.scan_running);
+        scanLan(prefix, !autoConnectUsed);
+    }
+
+    /** Manual entry point from the button; never auto-connects. */
+    private void scanLanManually() {
+        String prefix = subnetPrefixOf(localIpv4());
         if (prefix == null) {
             statusSubtitle.setText(R.string.scan_no_wifi);
             return;
         }
         btnScan.setEnabled(false);
         btnScan.setText(R.string.scan_running);
+        scanLan(prefix, false);
+    }
 
-        final Set<String> found = Collections.synchronizedSet(new LinkedHashSet<String>());
+    /**
+     * Two passes: a wide, cheap TCP sweep to find open ports, then an HTTP probe
+     * of only the handful that answered. Short timeouts and wide fan-out keep
+     * the whole thing to a few seconds.
+     */
+    private void scanLan(final String prefix, final boolean autoConnect) {
+        final Set<String> open = Collections.synchronizedSet(new LinkedHashSet<String>());
         final AtomicInteger remaining = new AtomicInteger(254 * SCAN_PORTS.length);
         final ExecutorService pool = Executors.newFixedThreadPool(48);
 
@@ -600,36 +686,84 @@ public class MainActivity extends AppCompatActivity {
                     Socket sock = new Socket();
                     try {
                         sock.connect(new InetSocketAddress(host, port), 400);
-                        found.add("http://" + host + ":" + port);
+                        open.add("http://" + host + ":" + port);
                     } catch (Exception ignored) {
-                        // host is silent on this port
+                        // host silent on this port
                     } finally {
                         try { sock.close(); } catch (Exception ignored) { }
                         if (remaining.decrementAndGet() == 0) {
-                            mainHandler.post(() -> finishScan(found));
+                            pool.shutdown();
+                            classifyFound(open, autoConnect);
                         }
                     }
                 });
             }
         }
-        pool.shutdown();
     }
 
-    private void finishScan(Set<String> found) {
-        btnScan.setEnabled(true);
-        btnScan.setText(R.string.scan_wifi);
-        if (recentsRow == null) return;
-        recentsRow.removeAllViews();
-        if (found.isEmpty()) {
-            statusSubtitle.setText(R.string.scan_none);
-            renderRecents();
+    /** Second pass: work out which open ports are actually editors. */
+    private void classifyFound(final Set<String> open, final boolean autoConnect) {
+        mainHandler.post(() -> statusSubtitle.setText(getString(R.string.scan_probing, open.size())));
+
+        executor.execute(() -> {
+            final List<String> ides = new ArrayList<>();
+            final List<String> others = new ArrayList<>();
+            for (String url : new ArrayList<>(open)) {
+                int kind = probeServer(url, 1500);
+                if (kind == PROBE_IDE) ides.add(url);
+                else if (kind == PROBE_HTTP) others.add(url);
+            }
+            mainHandler.post(() -> finishScan(ides, others, autoConnect));
+        });
+    }
+
+    private void finishScan(List<String> ides, List<String> others, boolean autoConnect) {
+        if (btnScan != null) {
+            btnScan.setEnabled(true);
+            btnScan.setText(R.string.scan_wifi);
+        }
+
+        if (autoConnect && !ides.isEmpty()) {
+            autoConnectUsed = true;
+            String target = ides.get(0);
+            statusTitle.setText(R.string.scan_title);
+            statusSubtitle.setText(getString(R.string.scan_connecting, target));
+            Log.i(TAG, "Auto-discovered IDE at " + target + " — connecting");
+            currentServerUrl = target;
+            prefs.edit().putString(KEY_SERVER_URL, target).apply();
+            if (editServerUrl != null) editServerUrl.setText(target);
+            isServerReady = false;
+            pollServerReadiness();
             return;
         }
-        addRowLabel(getString(R.string.scan_found, found.size()));
-        for (String url : found) addServerChoice(url);
-        for (String url : recentServers()) {
-            if (!found.contains(url)) addServerChoice(url);
+
+        showManualEntry(pendingError);
+        if (recentsRow == null) return;
+        recentsRow.removeAllViews();
+        if (!ides.isEmpty()) {
+            addRowLabel(getString(R.string.scan_found, ides.size()));
+            for (String url : ides) addServerChoice(url);
         }
+        if (!others.isEmpty()) {
+            addRowLabel(getString(R.string.scan_other));
+            for (String url : others) addServerChoice(url);
+        }
+        if (ides.isEmpty() && others.isEmpty()) {
+            statusSubtitle.setText(R.string.scan_none);
+        }
+        for (String url : recentServers()) {
+            if (!ides.contains(url) && !others.contains(url)) addServerChoice(url);
+        }
+    }
+
+    private void showManualEntry(String lastError) {
+        progressBar.setVisibility(View.GONE);
+        statusTitle.setText(R.string.server_not_found_title);
+        statusSubtitle.setText(getString(R.string.server_not_found_desc,
+                currentServerUrl, lastError == null ? "" : lastError));
+        serverConfigContainer.setVisibility(View.VISIBLE);
+        editServerUrl.setText(currentServerUrl);
+        renderRecents();
     }
 
     private void setupKeybar() {
