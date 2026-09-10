@@ -16,6 +16,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Must match where the app extracts the rootfs. Baked into every patched
+  # binary's ELF interpreter, so the two cannot drift apart.
+  ROOTFS_INSTALL_PATH: /data/data/com.openvscode.mobile.debug/files/rootfs
+
 jobs:
   build:
     name: rootfs (${{ matrix.arch }})
@@ -75,22 +80,37 @@ jobs:
           docker rm "$cid"
           ls -lh dist/
 
-      - name: Measure what is actually large
+      - name: Extract, patch for Android, and repack
         run: |
           set -e
-          # Guessing at what to trim wastes a 40-minute build per attempt.
-          # Extract the tar and report the real distribution instead.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf binutils
+
           mkdir -p probe
-          tar -xf dist/rootfs-${{ matrix.arch }}.tar -C probe 2>/dev/null || true
+          sudo tar -xf dist/rootfs-${{ matrix.arch }}.tar -C probe 2>/dev/null || true
+
           echo "=== uncompressed total ==="
-          du -sh probe | cut -f1
+          sudo du -sh probe | cut -f1
           echo "=== 25 largest directories ==="
-          du -h -d 3 probe 2>/dev/null | sort -rh | head -25
+          sudo du -h -d 3 probe 2>/dev/null | sort -rh | head -25
           echo "=== 15 largest single files ==="
-          find probe -type f -printf '%s\t%p\n' 2>/dev/null \
+          sudo find probe -type f -printf '%s\t%p\n' 2>/dev/null \
             | sort -rn | head -15 \
             | awk '{ printf "%.1f MB\t%s\n", $1/1048576, $2 }'
-          rm -rf probe
+
+          # Rewrite every ELF's interpreter and RPATH to the on-device install
+          # path, so binaries can be exec'd directly on Android. Done here
+          # rather than in the Dockerfile: inside the container the script
+          # would patch bash, find and patchelf while using them.
+          chmod +x tools/rootfs/patch-elf.sh
+          sudo ./tools/rootfs/patch-elf.sh probe \
+            "${{ env.ROOTFS_INSTALL_PATH }}" ${{ matrix.arch }}
+
+          echo "=== repacking ==="
+          sudo rm -f dist/rootfs-${{ matrix.arch }}.tar
+          sudo tar -cf dist/rootfs-${{ matrix.arch }}.tar -C probe .
+          sudo rm -rf probe
+          ls -lh dist/
 
       - name: Compress
         run: |

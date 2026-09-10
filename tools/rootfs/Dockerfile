@@ -116,4 +116,13 @@ RUN set -eux; \
     jupyter kernelspec list; \
     rm -f /tmp/t /tmp/t.cpp /tmp/t.py
 
+# --- make the image runnable on Android -----------------------------------
+#
+# Strictly last. Patching rewrites every binary's interpreter to a path that
+# exists on the phone and not in this container, so nothing above this line can
+# run afterwards — which is exactly why the verification stage sits above it.
+# ELF patching for Android happens in CI, after `docker export`, against the
+# extracted tree — see tools/rootfs/patch-elf.sh. Doing it here would have the
+# script rewrite bash, find and patchelf while it was still using them.
+
 CMD ["/usr/local/bin/start-ide"]
