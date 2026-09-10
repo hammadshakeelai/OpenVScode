@@ -228,7 +228,32 @@ public class MainActivity extends AppCompatActivity {
         statusSubtitle.setText(getString(R.string.server_loading_sub, currentServerUrl));
         isServerReady = false;
         autoDiscoveryDone = false;
+        ensureLocalIdeRunning();
         pollServerReadiness();
+    }
+
+    /**
+     * If the rootfs is installed, make sure the IDE inside it is running. The
+     * existing poll against 127.0.0.1:8080 then picks it up like any other
+     * server, so nothing else in the connect path needs to know about this.
+     */
+    private void ensureLocalIdeRunning() {
+        if (!RootfsInstaller.isInstalled(this) || RootfsLauncher.isRunning()) {
+            return;
+        }
+        String problem = RootfsLauncher.pathProblem(this);
+        if (problem != null) {
+            Log.e(TAG, "refusing to launch: " + problem);
+            return;
+        }
+        // Its own thread: the shared executor is busy with the poll loop.
+        new Thread(() -> {
+            try {
+                RootfsLauncher.start(this);
+            } catch (Exception e) {
+                Log.e(TAG, "could not start the local IDE", e);
+            }
+        }, "ide-launch").start();
     }
 
     private void startBackgroundService() {
@@ -642,13 +667,15 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onComplete(final java.io.File rootfs) {
                 mainHandler.post(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    statusTitle.setText(R.string.install_done_title);
-                    statusSubtitle.setText(R.string.install_done_desc);
-                    serverConfigContainer.setVisibility(View.VISIBLE);
                     btnInstallRootfs.setEnabled(true);
                     refreshInstallButton();
                     Log.i(TAG, "rootfs ready at " + rootfs);
+                    // Straight into starting it — the point of installing.
+                    statusTitle.setText(R.string.install_done_title);
+                    statusSubtitle.setText(R.string.install_done_desc);
+                    currentServerUrl = DEFAULT_SERVER_URL;
+                    prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
+                    startPollingCycle();
                 });
             }
 

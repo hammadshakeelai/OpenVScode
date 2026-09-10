@@ -38,6 +38,6 @@ echo \"allow-external-apps = true\" &gt;&gt; ~/.termux/termux.properties</string
     <string name="install_running_desc">This is a large one-time download. It resumes if the connection drops.</string>
     <string name="install_progress">%1$d%%  ·  %2$s of %3$s</string>
     <string name="install_done_title">IDE image installed</string>
-    <string name="install_done_desc">Python, C++ and Jupyter are unpacked on this device.</string>
+    <string name="install_done_desc">Starting the IDE… this takes a few seconds the first time.</string>
     <string name="install_failed_title">Install failed</string>
 </resources>
