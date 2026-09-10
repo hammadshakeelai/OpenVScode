@@ -46,8 +46,14 @@ final class RootfsInstaller {
     private static final String BASE_URL =
             "https://github.com/hammadshakeelai/OpenVScode/releases/download/rootfs-latest";
 
-    /** Uncompressed rootfs is several times the download; refuse if it cannot fit. */
-    private static final long SPACE_MULTIPLIER = 4;
+    /**
+     * How much free space the download implies. Measured: the image is 190 MB
+     * compressed and 1.2 GB unpacked, a ratio of 6.3, and the archive stays on
+     * disk while extracting. 4 was the first guess and it was too low — the
+     * check passed on a device with 480 MB free and the install then filled the
+     * partition and hung rather than failing. 8 leaves real headroom.
+     */
+    private static final long SPACE_MULTIPLIER = 8;
 
     interface Progress {
         void onStage(String stage);
