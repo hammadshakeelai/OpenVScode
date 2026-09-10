@@ -330,3 +330,83 @@ be rediscovered.
 Phase 3: download and extract on-device, with checksum verification and resume.
 Phase 4 needs `proot`, which is not yet built — that is the next real unknown,
 and the arm64 rootfs has still never executed on hardware.
+
+
+---
+
+## 9. Phase 4 — how far it got, and the wall it hit
+
+Everything below was measured on an **x86_64 API 36 emulator** with the real
+190 MB image installed.
+
+### 9.1 What works
+
+| Step | Result |
+|---|---|
+| Download, checksum, resume, extract 38,630 entries | works |
+| Patched ELF interpreters (388 executables) | works |
+| Patched shebangs (486 scripts) | works |
+| Repointed absolute symlinks (236) | works |
+| `bash`, `python3.11`, `node`, `clang` run from the image | works |
+| **code-server serves `127.0.0.1:8080`** | **works — HTTP 302** |
+
+That last line is the important one. The whole stack — Debian, glibc, Node,
+code-server — runs on Android and answers HTTP. The image is correct.
+
+### 9.2 The wall
+
+It only works when launched through `adb shell run-as`. Launched by the app
+itself, every glibc binary is killed instantly:
+
+```
+IDE process exited with code 159        # 128 + 31 = SIGSYS
+"Bad system call"
+```
+
+Isolated to a single command each, so there is no ambiguity:
+
+| binary | launched by the app |
+|---|---|
+| bionic `toybox true` | exit 0 |
+| glibc `ld.so --version` (x86_64) | exit 0 |
+| glibc `ld.so --version` (arm64) | exit 0 |
+| **glibc `true` (x86_64)** | **exit 159 — SIGSYS** |
+
+The dynamic loader itself is fine. The kill happens once libc initialises and
+the program actually runs. `GLIBC_TUNABLES=glibc.pthread.rseq=0` does not help,
+so it is not rseq.
+
+**Cause: Android's seccomp filter.** App processes inherit a syscall allow-list
+from zygote, and glibc's startup uses something outside it. `run-as` runs in the
+`runas_app` domain with a different policy, which is exactly why the same binary
+succeeds there and fails from the app — and why this took so long to see.
+
+This is not a path problem, a patchelf problem, or a permissions problem. Those
+were all real and are all fixed. This one is the platform.
+
+### 9.3 What is not known
+
+**Whether a real arm64 phone is affected.** Everything here ran on an x86_64
+emulator, and Android's seccomp policies are defined per architecture. The
+arm64 policy is the one exercised by every shipping device; the x86_64 one is
+essentially emulator-only. UserLAnd and Andronix do run Debian userlands from
+an app on real arm64 hardware, which suggests the arm64 filter is more
+permissive — but that is inference, not measurement.
+
+The arm64 loader ran to exit 0 here under the emulator's arm64 translation. A
+full arm64 glibc program could not be tested, because the rest of that image is
+not installed.
+
+**This is the single question worth answering next, and only a physical device
+can answer it.**
+
+### 9.4 If arm64 is also blocked
+
+- **A musl rootfs (Alpine).** musl's syscall usage is far more conservative than
+  glibc's, so it may fit inside the filter where glibc does not. Costs
+  compatibility: code-server's official builds are glibc.
+- **A bionic userland**, which is what Termux is, and why Termux works. That
+  means building every package against bionic — effectively rebuilding Termux,
+  which §4 already rejected as out of scope.
+- **Keep Termux as the engine**, which v1.0.5 already does and which needs none
+  of this.
