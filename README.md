@@ -24,11 +24,20 @@
 
 > [!IMPORTANT]
 > **Read this before you tap.** The APK is the Android *shell* — a WebView, a
-> foreground service and the touch keybar. It expects an IDE server on
-> `127.0.0.1:8080`, and **the installer that provisions that server is not written
-> yet** (see [below](#-alternative-run-it-under-termux)). Install it today and you get
-> the app plus a "retry connection" screen, not a working IDE. It is worth installing
-> if you want to try the shell, help test it, or point it at a server you run yourself.
+> foreground service and the touch keybar. It does not contain an IDE; it connects
+> to one. There are three ways to give it something to connect to, and only the
+> first is fully proven end to end:
+>
+> 1. **Point it at a server you already run.** Type any address — a laptop on the
+>    same Wi‑Fi, a hostname, a public URL — or let it scan your network. This works
+>    today.
+> 2. **Set it up through Termux** (one tap, needs Termux installed). The scripts are
+>    written and the app drives them itself, but they have **not yet been run on a
+>    real device**.
+> 3. **Install the IDE image directly** (no Termux). Downloads and unpacks a full
+>    Linux environment with Python, C++ and Jupyter — but **cannot launch it yet**.
+>    The piece that runs binaries out of that image is still being built. Tapping
+>    this today gets you a correctly-installed image and no IDE.
 
 **On the phone, tap this link:**
 
@@ -89,12 +98,17 @@ It expects the IDE server described below to be reachable on `127.0.0.1:8080`.
 
 ## ⚡ Alternative: run it under Termux
 
-> [!WARNING]
-> **The installer scripts are not written yet.** `setup.sh`, `start.sh` and everything
-> under `scripts/` are currently empty placeholder files, so the commands in this
-> section will not do anything yet. The tuned configuration in `config/`, the examples,
-> and the Android app are all real — this bootstrap path is the piece still outstanding.
-> Contributions welcome via the [issue tracker](https://github.com/hammadshakeelai/OpenVScode/issues).
+> [!NOTE]
+> **These scripts are written but untested on a device.** `setup.sh`, `start.sh` and
+> everything under `scripts/` now install the toolchain, code-server, and the Jupyter
+> kernels, and every step is idempotent so a failed run can simply be repeated. They
+> were developed on Windows against a Termux/aarch64 target with no way to run them,
+> so treat the first run as the real test and please
+> [report what breaks](https://github.com/hammadshakeelai/OpenVScode/issues).
+>
+> You can also skip the commands entirely: install the APK, and tap
+> **Set up Python, C++ & Jupyter automatically** — the app runs all of this for you
+> through Termux.
 
 ### Step 1: Install Termux
 Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/). The Google
@@ -152,13 +166,13 @@ Then open `http://127.0.0.1:8080` in your browser.
 
 ```
 OpenVScode/
-├── setup.sh                         # 1-click bootstrap installer   (empty — see warning above)
-├── start.sh                         # Launcher with wake-lock & IP   (empty — see warning above)
+├── setup.sh                         # 1-click bootstrap installer (Termux)
+├── start.sh                         # Launcher with wake-lock, waits for the port
 ├── config/
 │   ├── settings.json                # Pre-tuned mobile VS Code settings
 │   ├── keybindings.json             # Mobile touch shortcuts
 │   └── compile_flags.txt            # Clangd include paths & C++20 standard
-├── scripts/                         # Toolchain / kernel / extension installers (empty — see above)
+├── scripts/                         # Toolchain / kernel / extension installers
 ├── examples/
 │   ├── hello_python/                # Sample Python project
 │   ├── hello_cpp/                   # Sample C++ project with Makefile
@@ -170,9 +184,12 @@ OpenVScode/
 │   └── mobile-keyboard-bar.js       # On-screen touch coding keyboard bar
 ├── test-harness/                    # Browser simulator for the keybar: phone viewport,
 │                                    # virtual-keyboard resize, key injection, test suite
+├── tools/rootfs/                    # Dockerfile for the downloadable Linux image
 ├── .github/workflows/android.yml    # CI: builds the APK, attaches it to releases
+├── .github/workflows/rootfs.yml     # CI: builds the rootfs image per architecture
 └── docs/
     ├── assets/banner.svg            # README banner
+    ├── SELF_BOOTSTRAP_PLAN.md       # Running a Linux rootfs on Android: measurements + plan
     ├── MOBILE_OPTIMIZATIONS.md      # RAM, battery, and Android 12+ process fixes
     └── JUPYTER_CPP_EXPLAINED.md     # In-depth guide on C++ Jupyter kernels
 ```

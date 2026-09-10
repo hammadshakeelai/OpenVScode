@@ -17,8 +17,8 @@ android {
         // docs/SELF_BOOTSTRAP_PLAN.md §7. Forecloses Play Store distribution,
         // which the approach already ruled out.
         targetSdk = 28
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
