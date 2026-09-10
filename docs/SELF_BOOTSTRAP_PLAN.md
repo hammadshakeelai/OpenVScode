@@ -88,7 +88,7 @@ this project should not make silently.
 
 | Phase | Deliverable | Risk |
 |---|---|---|
-| **1** | `libexechook.so` builds with the NDK; an in-app test proves a child process spawned from a shell in the rootfs can itself exec | **This is the whole risk.** If the shim does not cover the tree, the design changes to proot |
+| ~~**1**~~ | ~~`libexechook.so` builds with the NDK; an in-app test proves a child process spawned from a shell in the rootfs can itself exec~~ | **PASSED — see §6** |
 | **2** | Rootfs build script (Alpine or Debian arm64) producing a tarball with Python, Clang, Node | Package availability on musl vs glibc; Debian is safer, Alpine is far smaller |
 | **3** | In-app download + verified extraction, resumable, with a real progress UI | Large download on mobile data; needs a checksum and a resume path |
 | **4** | `code-server` inside the rootfs, started on 127.0.0.1:8080 | Node on Android; the existing auto-discovery already handles the connect |
@@ -121,3 +121,54 @@ F-Droid, tap **Set up Python, C++ & Jupyter automatically**, and the app drives
 `setup.sh` itself via Termux's `RUN_COMMAND` service. That path is written and
 shipped. This plan exists to remove the Termux dependency, not to replace a
 stack that does not work.
+
+
+---
+
+## 6. Phase 1 result — PASSED
+
+Built `libexechook.so` for `arm64-v8a` and `x86_64` with NDK 27 via CMake, and
+ran it as a controlled experiment on an API 36 x86_64 emulator. Identical
+commands, differing only in whether the shim was preloaded:
+
+```
+1. control: system shell -> rootfs binary, NO hook
+     exit=126  output=/system/bin/sh: …/rootfs/bin/echo: Permission denied
+2. same command WITH hook preloaded
+     exit=0    output=HOOKED_RAN
+3. grandchild: shell -> shell -> rootfs binary
+     exit=0    output=GRANDCHILD_RAN
+4. via PATH lookup rather than an absolute path
+     exit=0    output=PATH_RAN
+```
+
+The control failing at exit 126 is what makes the rest meaningful: without it
+the test would prove only that `echo` runs.
+
+**Case 3 was the actual risk** and it is settled. `LD_PRELOAD` is inherited, so
+one shim covers an arbitrarily deep process tree — a shell can spawn a shell
+that spawns a compiler. logcat shows `exechook: loaded` once per process down
+the chain, confirming interposition rather than a lucky pass.
+
+**Case 4** confirms the PATH search had to be reimplemented: bionic resolves
+`execvp()` internally without going through the PLT, so interposing `execve()`
+alone would have missed it.
+
+The design stands. **proot is not needed**, which removes a third-party binary
+from the APK and the ptrace cost from every syscall.
+
+### Reproducing
+
+The probe ships in the app, off by default:
+
+```
+adb shell am start -n com.openvscode.mobile.debug/com.openvscode.mobile.MainActivity --ez run_probe true
+adb logcat -d -s PHASE1:* exechook:*
+```
+
+### Still unverified
+
+Phase 1 ran on **x86_64**. The `arm64-v8a` library builds but has not executed
+on real hardware, and phones are arm64. Re-run the probe on a physical device
+before Phase 2 is worth starting — the SELinux policy is the same, so this is
+expected to pass, but "expected" is what Phase 1 existed to replace.

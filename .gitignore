@@ -32,3 +32,4 @@ android/build/
 android/app/build/
 android/local.properties
 *.apk.idsig
+android/app/.cxx/

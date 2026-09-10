@@ -112,6 +112,11 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        // Diagnostic, off by default. Run it with:
+        //   adb shell am start -n <pkg>/.MainActivity --ez run_probe true
+        if (getIntent() != null && getIntent().getBooleanExtra("run_probe", false)) {
+            BootstrapProbe.run(this);
+        }
         currentServerUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
 
         Intent startIntent = getIntent();

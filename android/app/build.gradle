@@ -14,6 +14,28 @@ android {
         versionName = "1.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Only the ABIs we actually target: real phones are arm64, the test
+        // emulator is x86_64. Building the others just inflates the APK.
+        ndk {
+            abiFilters += ["arm64-v8a", "x86_64"]
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // The shim must exist as a real file in the native library directory, not
+    // be loaded straight from the APK — that directory is the only location an
+    // app is permitted to execute from.
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildTypes {
