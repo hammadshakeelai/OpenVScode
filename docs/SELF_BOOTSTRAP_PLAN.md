@@ -172,3 +172,87 @@ Phase 1 ran on **x86_64**. The `arm64-v8a` library builds but has not executed
 on real hardware, and phones are arm64. Re-run the probe on a physical device
 before Phase 2 is worth starting — the SELinux policy is the same, so this is
 expected to pass, but "expected" is what Phase 1 existed to replace.
+
+
+---
+
+## 7. Phase 2 opening measurements — the design has to change
+
+Phase 2 began by building a rootfs. It stopped immediately, because a Phase 1
+conclusion turned out to be narrower than it was written.
+
+### 7.1 The linker trick does not extend to glibc
+
+Phase 1 proved the linker rewrite using **toybox**, which is an Android binary
+linked against **bionic**. Every real rootfs — Debian, Ubuntu, Alpine — is
+linked against **glibc** or **musl**. That is a different question, and it was
+never asked.
+
+A glibc `echo` taken from Ubuntu (`PT_INTERP=/lib64/ld-linux-x86-64.so.2`,
+`DT_NEEDED libc.so.6`) was pushed into the app data directory and run at
+targetSdk 35:
+
+```
+5.  glibc binary, direct            -> EACCES (Permission denied)
+5b. glibc binary via linker64       -> exit=1
+    CANNOT LINK EXECUTABLE: library "libc.so.6" not found: needed by main executable
+```
+
+Android's linker *is* bionic. It cannot satisfy `libc.so.6`, so it cannot load
+a glibc executable no matter how it is invoked. **"proot is not needed" was true
+only for bionic binaries**, and the rootfs we want is not bionic.
+
+### 7.2 targetSdk 28 restores execution
+
+The same probe, same device, only `targetSdk` changed from 35 to 28:
+
+```
+1.  control: system shell -> rootfs binary, NO hook   -> exit=0  CONTROL_RAN
+5.  glibc binary, direct                              -> error=2  No such file or directory
+```
+
+Two things changed, and the second is the more informative:
+
+1. **Direct exec from the app data directory works again.** Apps targeting ≤ 28
+   run in the `untrusted_app_27` SELinux domain, which still holds `execute` on
+   `app_data_file`. That compatibility domain is alive on API 36.
+2. **The glibc failure changed from `EACCES` to `ENOENT`.** Permission is no
+   longer the obstacle; the kernel simply cannot find the ELF interpreter at
+   `/lib64/ld-linux-x86-64.so.2`, a path we cannot create outside our sandbox.
+
+`ENOENT` on the interpreter is precisely the problem `proot` solves: it
+virtualizes path resolution so `/lib64/...` lands inside the rootfs.
+
+The APK built at targetSdk 28 installed and ran normally on API 36.
+
+### 7.3 Revised architecture
+
+| | targetSdk 35 + exec shim | targetSdk 28 + proot |
+|---|---|---|
+| Bionic binaries | works (proved) | works |
+| glibc rootfs (Debian) | **impossible** — bionic linker cannot load glibc | works, standard approach |
+| Extra components | `libexechook.so` (built, working) | `proot` built for Android |
+| Play Store | already foreclosed | already foreclosed |
+
+The right combination is **targetSdk 28 + proot + a glibc rootfs**. This is what
+UserLAnd and Andronix do, and these measurements explain why they all do it that
+way rather than something lighter.
+
+`libexechook.so` is kept in the tree: it is correct, tested, and is what makes a
+*bionic* rootfs viable at a modern targetSdk. It is simply not the tool for a
+Debian rootfs.
+
+### 7.4 The open decision
+
+Dropping to targetSdk 28 affects the entire app, not just this feature, so it is
+not a change to make quietly:
+
+- **For:** it is the only measured path to a no-Termux rootfs; it also removes
+  the Android 13 notification-permission dance, since pre-33 behaviour applies.
+- **Against:** it forecloses Play Store distribution permanently (already
+  foreclosed by the linker technique), some devices show an "older version of
+  Android" notice at install, and modern platform behaviours are opted out of
+  app-wide.
+
+Phase 2's rootfs build is required under either answer, so it proceeds while
+this is decided.

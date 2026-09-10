@@ -1,0 +1,124 @@
+name: Build IDE rootfs
+
+# Builds the Linux filesystem the app downloads on first launch. Manual and
+# tag-driven only: this is a multi-gigabyte build behind qemu and has no
+# business running on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Attach the result to the rootfs-latest release'
+        type: boolean
+        default: false
+  push:
+    tags: ['rootfs-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: rootfs (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            platform: linux/arm64
+          - arch: amd64
+            platform: linux/amd64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # The runner is amd64; arm64 is built under emulation. Slow but correct,
+      # and it keeps the build reproducible from one place.
+      - name: Set up QEMU
+        if: matrix.arch != 'amd64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Reclaim runner disk
+        run: |
+          set -e
+          echo "before:"; df -h / | tail -1
+          # The hosted image ships toolchains this build has no use for, and
+          # the export needs the headroom.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          echo "after:"; df -h / | tail -1
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: tools/rootfs
+          platforms: ${{ matrix.platform }}
+          tags: openvscode-rootfs:${{ matrix.arch }}
+          load: true
+          provenance: false
+
+      # docker export flattens the image to a plain filesystem tar, which is
+      # what the app extracts. `docker save` would emit layers instead.
+      - name: Export the filesystem
+        run: |
+          set -e
+          mkdir -p dist
+          cid=$(docker create --platform ${{ matrix.platform }} openvscode-rootfs:${{ matrix.arch }})
+          echo "container: $cid"
+          docker export "$cid" -o dist/rootfs-${{ matrix.arch }}.tar
+          docker rm "$cid"
+          ls -lh dist/
+
+      - name: Compress
+        run: |
+          set -e
+          cd dist
+          # gzip, not xz: the Android side decompresses with the JDK's built-in
+          # GZIPInputStream, so no decompressor has to ship in the APK. Costs
+          # some size against xz; revisit if the download proves too large.
+          gzip -9 -c rootfs-${{ matrix.arch }}.tar > rootfs-${{ matrix.arch }}.tar.gz
+          rm rootfs-${{ matrix.arch }}.tar
+          sha256sum rootfs-${{ matrix.arch }}.tar.gz > rootfs-${{ matrix.arch }}.tar.gz.sha256
+          ls -lh
+          cat rootfs-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Report what is inside
+        run: |
+          set -e
+          echo "=== compressed ==="
+          du -h dist/rootfs-${{ matrix.arch }}.tar.gz
+          echo "=== toolchain versions (amd64 only; arm64 cannot run here) ==="
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            docker run --rm --platform ${{ matrix.platform }} \
+              openvscode-rootfs:${{ matrix.arch }} \
+              bash -lc 'python3 --version; clang --version | head -1; node --version; code-server --version | head -1; jupyter kernelspec list 2>/dev/null || true'
+          else
+            echo "skipped under emulation"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish to the rootfs release
+        if: startsWith(github.ref, 'refs/tags/rootfs-v') || inputs.publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/rootfs-v') && github.ref_name || 'rootfs-latest' }}
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            Linux rootfs images the OpenVScode Mobile app downloads on first launch.
+
+            Contains Debian bookworm with Python 3, Clang, Node, code-server and
+            Jupyter. Verify with the accompanying `.sha256` before extracting.

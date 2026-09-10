@@ -81,6 +81,25 @@ final class BootstrapProbe {
                         "/system/bin/sh -c '" + echo.getAbsolutePath() + " GRANDCHILD_RAN'"},
                 hook, rootfs.getAbsolutePath(), rootfs);
 
+        // 5. The question phase 1 did not actually answer. toybox is an Android
+        //    binary linked against bionic, so the linker could load it. A real
+        //    Debian rootfs is glibc: PT_INTERP=/lib64/ld-linux-x86-64.so.2 and
+        //    DT_NEEDED libc.so.6, neither of which exists on Android. Push a
+        //    glibc binary to files/glibc_echo and this reports whether the
+        //    linker trick extends to it.
+        File glibc = new File(ctx.getFilesDir(), "glibc_echo");
+        if (glibc.exists()) {
+            glibc.setExecutable(true, true);
+            Log.i(TAG, "--- 5. glibc binary, direct ---");
+            runCase(new String[]{glibc.getAbsolutePath(), "GLIBC_DIRECT_RAN"},
+                    hook, rootfs.getAbsolutePath(), rootfs);
+            Log.i(TAG, "--- 5b. glibc binary, explicitly via the Android linker ---");
+            runCase(new String[]{"/system/bin/linker64", glibc.getAbsolutePath(), "GLIBC_LINKER_RAN"},
+                    null, null, rootfs);
+        } else {
+            Log.i(TAG, "--- 5. skipped: no files/glibc_echo present ---");
+        }
+
         // 4. PATH resolution, which bionic does inside execvp() without going
         //    through the PLT — the reason the shim reimplements the search.
         Log.i(TAG, "--- 4. via PATH lookup rather than an absolute path ---");
