@@ -1,0 +1,411 @@
+package com.openvscode.mobile;
+
+import android.content.Context;
+import android.os.Build;
+import android.os.StatFs;
+import android.util.Log;
+
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.util.Locale;
+
+/**
+ * Downloads and unpacks the Linux rootfs that provides Python, C++ and Jupyter.
+ *
+ * Three properties matter more than speed here, because this runs once on a
+ * phone over a connection that may well drop:
+ *
+ *   resumable   — a 250 MB download that restarts from zero on a dropped
+ *                 connection is a download that never finishes on mobile data.
+ *   verified    — the archive is checked against its published SHA-256 before
+ *                 a single byte is extracted.
+ *   atomic      — extraction goes to a scratch directory and is renamed into
+ *                 place at the end, so an interrupted run cannot leave a
+ *                 half-populated rootfs that looks installed.
+ */
+final class RootfsInstaller {
+
+    private static final String TAG = "RootfsInstaller";
+
+    /** Where the CI-built images are published. */
+    private static final String BASE_URL =
+            "https://github.com/hammadshakeelai/OpenVScode/releases/download/rootfs-latest";
+
+    /** Uncompressed rootfs is several times the download; refuse if it cannot fit. */
+    private static final long SPACE_MULTIPLIER = 4;
+
+    interface Progress {
+        void onStage(String stage);
+        /** total is -1 when the server does not report a length. */
+        void onProgress(long done, long total);
+        void onComplete(File rootfs);
+        void onError(String message);
+    }
+
+    private RootfsInstaller() { }
+
+    /** arm64-v8a -> arm64, x86_64 -> amd64. Null when unsupported. */
+    static String archSuffix() {
+        for (String abi : Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equals(abi)) return "arm64";
+            if ("x86_64".equals(abi)) return "amd64";
+        }
+        return null;
+    }
+
+    static File rootfsDir(Context ctx) {
+        return new File(ctx.getFilesDir(), "rootfs");
+    }
+
+    /** A rootfs is only "installed" once the stamp exists — see the atomic rename. */
+    static boolean isInstalled(Context ctx) {
+        return new File(rootfsDir(ctx), ".installed").exists();
+    }
+
+    static void install(final Context ctx, final Progress cb) {
+        new Thread(() -> {
+            try {
+                doInstall(ctx, cb);
+            } catch (Throwable t) {
+                Log.e(TAG, "install failed", t);
+                cb.onError(t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+        }, "rootfs-installer").start();
+    }
+
+    private static void doInstall(Context ctx, Progress cb) throws Exception {
+        String arch = archSuffix();
+        if (arch == null) {
+            cb.onError("No rootfs is published for this device's CPU ("
+                    + (Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "unknown") + ").");
+            return;
+        }
+
+        String name = "rootfs-" + arch + ".tar.xz";
+        File dir = ctx.getFilesDir();
+        File archive = new File(dir, name + ".part");
+        File target = rootfsDir(ctx);
+
+        cb.onStage("Checking the published image…");
+        long remoteSize = contentLength(BASE_URL + "/" + name);
+        String expectedSha = fetchSha256(BASE_URL + "/" + name + ".sha256");
+        Log.i(TAG, "remote=" + remoteSize + " sha=" + expectedSha);
+
+        if (remoteSize > 0) {
+            long needed = remoteSize * SPACE_MULTIPLIER;
+            long free = new StatFs(dir.getAbsolutePath()).getAvailableBytes();
+            if (free < needed) {
+                cb.onError(String.format(Locale.US,
+                        "Not enough space. Need about %s free, have %s.",
+                        human(needed), human(free)));
+                return;
+            }
+        }
+
+        cb.onStage("Downloading the IDE image…");
+        download(BASE_URL + "/" + name, archive, remoteSize, cb);
+
+        cb.onStage("Verifying the download…");
+        String actual = sha256(archive);
+        if (expectedSha != null && !expectedSha.equalsIgnoreCase(actual)) {
+            // A corrupt partial file would otherwise be resumed forever.
+            if (!archive.delete()) {
+                Log.w(TAG, "could not delete corrupt archive " + archive);
+            }
+            cb.onError("The download did not match its published checksum, so it was discarded. "
+                    + "Tap to try again.");
+            return;
+        }
+        Log.i(TAG, "checksum ok: " + actual);
+
+        cb.onStage("Unpacking Python, C++ and Jupyter…");
+        File scratch = new File(dir, "rootfs.incoming");
+        deleteTree(scratch);
+        if (!scratch.mkdirs()) {
+            cb.onError("Could not create " + scratch);
+            return;
+        }
+        extract(archive, scratch, cb);
+
+        // Only now is it safe to call this installed.
+        deleteTree(target);
+        if (!scratch.renameTo(target)) {
+            cb.onError("Could not move the unpacked files into place.");
+            return;
+        }
+        if (!new File(target, ".installed").createNewFile()) {
+            Log.w(TAG, "could not write the .installed stamp");
+        }
+        if (!archive.delete()) {
+            Log.w(TAG, "could not remove " + archive);
+        }
+
+        Log.i(TAG, "rootfs installed at " + target);
+        cb.onComplete(target);
+    }
+
+    // ---- download --------------------------------------------------------
+
+    private static long contentLength(String url) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setRequestMethod("HEAD");
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(15000);
+            c.setInstanceFollowRedirects(true);
+            c.getResponseCode();
+            return c.getContentLengthLong();
+        } catch (Exception e) {
+            Log.w(TAG, "HEAD failed for " + url, e);
+            return -1;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    private static String fetchSha256(String url) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(15000);
+            c.setInstanceFollowRedirects(true);
+            if (c.getResponseCode() != 200) return null;
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            copy(c.getInputStream(), buf, null, 0, -1);
+            // Format is "<hex>  <filename>".
+            String text = buf.toString("UTF-8").trim();
+            int space = text.indexOf(' ');
+            return space > 0 ? text.substring(0, space) : text;
+        } catch (Exception e) {
+            Log.w(TAG, "could not fetch checksum", e);
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** Resumes from whatever is already on disk rather than starting over. */
+    private static void download(String url, File dest, long total, Progress cb) throws IOException {
+        long have = dest.exists() ? dest.length() : 0;
+        if (total > 0 && have == total) {
+            Log.i(TAG, "archive already complete");
+            cb.onProgress(have, total);
+            return;
+        }
+        if (total > 0 && have > total) {
+            // Stale or truncated remote; start clean.
+            if (!dest.delete()) Log.w(TAG, "could not delete oversized partial");
+            have = 0;
+        }
+
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(20000);
+        c.setReadTimeout(30000);
+        c.setInstanceFollowRedirects(true);
+        if (have > 0) {
+            c.setRequestProperty("Range", "bytes=" + have + "-");
+        }
+
+        int code = c.getResponseCode();
+        boolean appending = (code == HttpURLConnection.HTTP_PARTIAL);
+        if (!appending && code != HttpURLConnection.HTTP_OK) {
+            c.disconnect();
+            throw new IOException("Download failed with HTTP " + code);
+        }
+        if (have > 0 && !appending) {
+            // Server ignored the range; the bytes we have are unusable.
+            Log.w(TAG, "range not honoured, restarting download");
+            have = 0;
+        }
+
+        try (InputStream in = new BufferedInputStream(c.getInputStream());
+             RandomAccessFile out = new RandomAccessFile(dest, "rw")) {
+            out.seek(have);
+            byte[] buf = new byte[64 * 1024];
+            long done = have;
+            int n;
+            long lastReport = 0;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                done += n;
+                // Reporting every chunk floods the UI thread; once per MB is plenty.
+                if (done - lastReport > 1024 * 1024) {
+                    cb.onProgress(done, total);
+                    lastReport = done;
+                }
+            }
+            cb.onProgress(done, total);
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    // ---- extraction ------------------------------------------------------
+
+    private static void extract(File archive, File dest, Progress cb) throws IOException {
+        long entries = 0;
+        try (InputStream fin = new BufferedInputStream(new FileInputStream(archive), 128 * 1024);
+             XZCompressorInputStream xz = new XZCompressorInputStream(fin);
+             TarArchiveInputStream tar = new TarArchiveInputStream(xz)) {
+
+            String canonicalDest = dest.getCanonicalPath() + File.separator;
+            TarArchiveEntry entry;
+            while ((entry = tar.getNextEntry()) != null) {
+                File out = new File(dest, entry.getName());
+
+                // Refuse anything that would escape the target directory.
+                if (!out.getCanonicalPath().startsWith(canonicalDest)) {
+                    Log.w(TAG, "skipping entry outside target: " + entry.getName());
+                    continue;
+                }
+
+                if (entry.isDirectory()) {
+                    if (!out.isDirectory() && !out.mkdirs()) {
+                        Log.w(TAG, "could not create dir " + out);
+                    }
+                } else if (entry.isSymbolicLink()) {
+                    // A Debian rootfs is full of these; dropping them breaks it.
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                        Log.w(TAG, "could not create parent for symlink " + out);
+                    }
+                    try {
+                        Files.deleteIfExists(out.toPath());
+                        Files.createSymbolicLink(out.toPath(), Paths.get(entry.getLinkName()));
+                    } catch (Exception e) {
+                        Log.w(TAG, "symlink failed " + entry.getName() + " -> " + entry.getLinkName());
+                    }
+                } else if (entry.isLink()) {
+                    File src = new File(dest, entry.getLinkName());
+                    try {
+                        Files.deleteIfExists(out.toPath());
+                        Files.createLink(out.toPath(), src.toPath());
+                    } catch (Exception e) {
+                        // Fall back to a copy; a hard link is an optimisation.
+                        if (src.isFile()) {
+                            copyFile(src, out);
+                        }
+                    }
+                } else if (entry.isFile()) {
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                        Log.w(TAG, "could not create parent for " + out);
+                    }
+                    try (OutputStream os = new FileOutputStream(out)) {
+                        copy(tar, os, null, 0, -1);
+                    }
+                    applyMode(out, entry.getMode());
+                } else {
+                    // Device nodes, fifos and sockets cannot be created without
+                    // privileges and nothing in the IDE path needs them.
+                    Log.d(TAG, "skipping special entry " + entry.getName());
+                }
+
+                if (++entries % 2000 == 0) {
+                    cb.onStage("Unpacking… " + entries + " files");
+                }
+            }
+        }
+        Log.i(TAG, "extracted " + entries + " entries");
+    }
+
+    /** The executable bit is what makes the rootfs runnable; the rest is cosmetic. */
+    private static void applyMode(File f, int mode) {
+        try {
+            if ((mode & 0100) != 0) {
+                if (!f.setExecutable(true, false)) {
+                    Log.d(TAG, "setExecutable failed for " + f);
+                }
+            }
+            if (!f.setReadable(true, false)) {
+                Log.d(TAG, "setReadable failed for " + f);
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "mode failed for " + f, e);
+        }
+    }
+
+    // ---- helpers ---------------------------------------------------------
+
+    private static String sha256(File f) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        try (InputStream in = new BufferedInputStream(new FileInputStream(f), 128 * 1024)) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                md.update(buf, 0, n);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : md.digest()) {
+            sb.append(String.format(Locale.US, "%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private static void copy(InputStream in, OutputStream out, Progress cb, long done, long total)
+            throws IOException {
+        byte[] buf = new byte[64 * 1024];
+        int n;
+        while ((n = in.read(buf)) > 0) {
+            out.write(buf, 0, n);
+            if (cb != null) {
+                done += n;
+                cb.onProgress(done, total);
+            }
+        }
+    }
+
+    private static void copyFile(File from, File to) throws IOException {
+        try (InputStream in = new FileInputStream(from);
+             OutputStream out = new FileOutputStream(to)) {
+            copy(in, out, null, 0, -1);
+        }
+    }
+
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory() && !isSymlink(f)) {
+            File[] kids = f.listFiles();
+            if (kids != null) {
+                for (File kid : kids) deleteTree(kid);
+            }
+        }
+        if (!f.delete()) {
+            Log.d(TAG, "could not delete " + f);
+        }
+    }
+
+    /** Never recurse through a symlink when deleting — the rootfs has many. */
+    private static boolean isSymlink(File f) {
+        try {
+            return Files.isSymbolicLink(f.toPath());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    static String human(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format(Locale.US, "%.0f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format(Locale.US, "%.0f MB", bytes / 1048576.0);
+        return String.format(Locale.US, "%.1f GB", bytes / 1073741824.0);
+    }
+}

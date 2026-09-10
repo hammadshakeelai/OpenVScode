@@ -99,6 +99,7 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout recentsRow;
     private Button btnScan;
     private Button btnSetup;
+    private Button btnInstallRootfs;
 
     // Runtime permission request for Android 13+ (POST_NOTIFICATIONS)
     private final ActivityResultLauncher<String> requestPermissionLauncher =
@@ -520,6 +521,7 @@ public class MainActivity extends AppCompatActivity {
         btnScan.setOnClickListener(v -> scanLanManually());
         serverConfigContainer.addView(btnScan);
 
+        buildInstallButton();
         buildSetupButton();
 
         recentsRow = new LinearLayout(this);
@@ -570,6 +572,95 @@ public class MainActivity extends AppCompatActivity {
             startPollingCycle();
         });
         recentsRow.addView(b);
+    }
+
+
+    // ---- Self-contained install (no Termux) ------------------------------
+
+    /**
+     * Downloads and unpacks the Linux rootfs that carries Python, C++ and
+     * Jupyter. Unlike the Termux path this needs no second app — at the cost of
+     * a large one-time download, which is why the button states the size.
+     */
+    private void buildInstallButton() {
+        btnInstallRootfs = new Button(this);
+        btnInstallRootfs.setAllCaps(false);
+        btnInstallRootfs.setTextSize(14f);
+        btnInstallRootfs.setTextColor(Color.parseColor("#FFFFFF"));
+        btnInstallRootfs.setBackgroundColor(Color.parseColor("#005a9e"));
+        btnInstallRootfs.setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dpToPx(10);
+        btnInstallRootfs.setLayoutParams(lp);
+        refreshInstallButton();
+        btnInstallRootfs.setOnClickListener(v -> startRootfsInstall());
+        serverConfigContainer.addView(btnInstallRootfs, 0);
+    }
+
+    private void refreshInstallButton() {
+        if (btnInstallRootfs == null) return;
+        if (RootfsInstaller.archSuffix() == null) {
+            btnInstallRootfs.setText(R.string.install_unsupported_cpu);
+            btnInstallRootfs.setEnabled(false);
+        } else if (RootfsInstaller.isInstalled(this)) {
+            btnInstallRootfs.setText(R.string.install_reinstall);
+        } else {
+            btnInstallRootfs.setText(R.string.install_rootfs);
+        }
+    }
+
+    private void startRootfsInstall() {
+        btnInstallRootfs.setEnabled(false);
+        serverConfigContainer.setVisibility(View.GONE);
+        progressBar.setVisibility(View.VISIBLE);
+        statusTitle.setText(R.string.install_running_title);
+        statusSubtitle.setText(R.string.install_running_desc);
+
+        RootfsInstaller.install(this, new RootfsInstaller.Progress() {
+            @Override
+            public void onStage(final String stage) {
+                mainHandler.post(() -> statusTitle.setText(stage));
+            }
+
+            @Override
+            public void onProgress(final long done, final long total) {
+                mainHandler.post(() -> {
+                    if (total > 0) {
+                        int pct = (int) (done * 100 / total);
+                        statusSubtitle.setText(getString(R.string.install_progress,
+                                pct, RootfsInstaller.human(done), RootfsInstaller.human(total)));
+                    } else {
+                        statusSubtitle.setText(RootfsInstaller.human(done));
+                    }
+                });
+            }
+
+            @Override
+            public void onComplete(final java.io.File rootfs) {
+                mainHandler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    statusTitle.setText(R.string.install_done_title);
+                    statusSubtitle.setText(R.string.install_done_desc);
+                    serverConfigContainer.setVisibility(View.VISIBLE);
+                    btnInstallRootfs.setEnabled(true);
+                    refreshInstallButton();
+                    Log.i(TAG, "rootfs ready at " + rootfs);
+                });
+            }
+
+            @Override
+            public void onError(final String message) {
+                mainHandler.post(() -> {
+                    progressBar.setVisibility(View.GONE);
+                    statusTitle.setText(R.string.install_failed_title);
+                    statusSubtitle.setText(message);
+                    serverConfigContainer.setVisibility(View.VISIBLE);
+                    btnInstallRootfs.setEnabled(true);
+                    refreshInstallButton();
+                });
+            }
+        });
     }
 
     // ---- One-tap provisioning through Termux -----------------------------

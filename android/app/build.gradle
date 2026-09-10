@@ -70,5 +70,11 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.webkit:webkit:1.10.0")
+
+    // Rootfs extraction. commons-compress reads the tar (symlinks, long names,
+    // PAX headers — a Debian rootfs has all three); tukaani provides the xz
+    // decoder, which the JDK does not ship. Together ~1.1 MB of APK.
+    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.tukaani:xz:1.10")
     testImplementation("junit:junit:4.13.2")
 }

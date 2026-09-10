@@ -85,8 +85,11 @@ RUN set -eux; \
     find /opt/code-server -name '*.js.map' -delete 2>/dev/null || true; \
     find /opt/code-server -name '*.ts' -delete 2>/dev/null || true; \
     \
-    # Static archives. Nothing here links statically, and LLVM's are enormous.
-    find /usr/lib -name '*.a' -delete 2>/dev/null || true; \
+    # LLVM's static archives only. A blanket delete of *.a under /usr/lib was
+    # tried and failed the build: clang links libgcc.a for compiler intrinsics
+    # even when producing a dynamic executable, giving "cannot find -lgcc".
+    # Anything under /usr/lib/gcc stays.
+    find /usr/lib/llvm-* -name '*.a' -delete 2>/dev/null || true; \
     \
     # Python bytecode caches regenerate on demand.
     find / -name '*.pyc' -delete 2>/dev/null || true; \
