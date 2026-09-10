@@ -203,6 +203,15 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void requestNotificationPermission() {
+        // Kept, but it cannot succeed while we target 28. Measured on API 36:
+        // a legacy-target app calling this is auto-denied with no dialog, and
+        // the app sits at importance=NONE, so the foreground-service
+        // notification never appears. Enabling it requires Settings -> Apps ->
+        // OpenVScode -> Notifications. Guarding the call on targetSdk was tried
+        // and is worse: it stops the app asking on devices where it would work.
+        // Consequence: the notification is not a reliable way to stop the
+        // session, so onDestroy() stops the service and the wake lock carries
+        // its own 30-minute timeout.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                     != PackageManager.PERMISSION_GRANTED) {

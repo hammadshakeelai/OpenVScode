@@ -9,7 +9,14 @@ android {
     defaultConfig {
         applicationId = "com.openvscode.mobile"
         minSdk = 26
-        targetSdk = 35
+        // Deliberately 28, not the platform maximum. Apps targeting <= 28 run in
+        // the untrusted_app_27 SELinux domain, which still permits execute on
+        // app_data_file — measured alive on API 36. That is the only path to
+        // running a downloaded glibc rootfs, since Android's bionic linker
+        // cannot load glibc binaries however they are invoked. See
+        // docs/SELF_BOOTSTRAP_PLAN.md §7. Forecloses Play Store distribution,
+        // which the approach already ruled out.
+        targetSdk = 28
         versionCode = 6
         versionName = "1.0.5"
 

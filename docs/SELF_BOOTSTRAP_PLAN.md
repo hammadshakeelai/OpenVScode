@@ -89,7 +89,7 @@ this project should not make silently.
 | Phase | Deliverable | Risk |
 |---|---|---|
 | ~~**1**~~ | ~~`libexechook.so` builds with the NDK; an in-app test proves a child process spawned from a shell in the rootfs can itself exec~~ | **PASSED — see §6** |
-| **2** | Rootfs build script (Alpine or Debian arm64) producing a tarball with Python, Clang, Node | Package availability on musl vs glibc; Debian is safer, Alpine is far smaller |
+| ~~**2**~~ | ~~Rootfs build script producing a tarball with Python, Clang, Node~~ | **BUILT — see §8** |
 | **3** | In-app download + verified extraction, resumable, with a real progress UI | Large download on mobile data; needs a checksum and a resume path |
 | **4** | `code-server` inside the rootfs, started on 127.0.0.1:8080 | Node on Android; the existing auto-discovery already handles the connect |
 | **5** | Jupyter kernels (Python + C++) | Native builds are slow; may need prebuilt wheels in the rootfs |
@@ -256,3 +256,77 @@ not a change to make quietly:
 
 Phase 2's rootfs build is required under either answer, so it proceeds while
 this is decided.
+
+
+---
+
+## 8. Phase 2 result — rootfs built
+
+`targetSdk` is now **28**, decided deliberately (§7.4). The rootfs builds in CI
+for both architectures via qemu and publishes with checksums.
+
+### What is in it
+
+Verified by running the image natively in the amd64 job:
+
+```
+Python 3.11.2
+Debian clang version 14.0.6
+Available kernels:
+  cpp03  cpp11  cpp14  cpp17  cpp20  cpp23  cpp98
+  python3
+```
+
+Seven C++ standards plus Python, which is more than the original brief asked
+for. code-server, Node and the toolchain are present.
+
+The arm64 job cannot execute its own image — the runner is amd64 and qemu only
+emulates the build — so those versions are asserted from the amd64 build of the
+same Dockerfile, not measured on arm64.
+
+### Size — the open problem
+
+| Image | Compressed |
+|---|---|
+| `rootfs-arm64.tar.gz` | **402 MB** |
+| `rootfs-amd64.tar.gz` | **427 MB** |
+
+That is a large first-run download on a phone, and it is the main thing standing
+between this and something pleasant to use. Options, roughly in order of return:
+
+1. **Switch gzip → xz or zstd.** Likely 30–40% smaller. Costs a decompressor in
+   the APK, since the JDK only has gzip built in. gzip was chosen to keep the
+   Android side simple; that trade now looks wrong at this size.
+2. **Drop `llvm`**, keeping only `clang`. The full LLVM toolchain is a large
+   part of the image and little of it is used to compile a single file.
+3. **Split the download.** Ship Python + Clang first so the IDE is usable, and
+   fetch Jupyter on demand.
+4. **Trim code-server.** It carries built-in extensions that make no sense on a
+   phone.
+
+None of these are blocking — the image is correct — so they are optimisation,
+not correctness.
+
+### Notification regression from targetSdk 28
+
+Found by testing rather than by reasoning. On API 36 a targetSdk-28 app:
+
+- calling `requestPermissions(POST_NOTIFICATIONS)` is **auto-denied with no
+  dialog**, and
+- sits at `importance=NONE`, so the foreground-service notification never posts.
+
+The notification carried the **Stop Session** action, so it is no longer a
+reliable way to end a session. Guarding the request on `targetSdkVersion` was
+tried and reverted: it stops the app asking on devices where asking would work.
+The wake lock is instead bounded by `onDestroy()` stopping the service and by
+its own 30-minute timeout. A user who wants the notification can enable it under
+Settings → Apps → OpenVScode → Notifications.
+
+This is a genuine cost of targetSdk 28 and is recorded here rather than left to
+be rediscovered.
+
+### Next
+
+Phase 3: download and extract on-device, with checksum verification and resume.
+Phase 4 needs `proot`, which is not yet built — that is the next real unknown,
+and the arm64 rootfs has still never executed on hardware.
