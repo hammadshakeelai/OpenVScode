@@ -56,11 +56,15 @@ RUN set -eux; \
     fi; \
     code-server --version
 
-# Jupyter. `notebook` rather than the full JupyterLab: markedly smaller, and the
-# app renders it in a WebView on a phone screen either way.
+# Jupyter kernels only — no notebook web UI.
+#
+# The editor renders notebooks natively, so what is actually needed is a kernel
+# and a client, not a second front end. `notebook` 7 depends on all of
+# JupyterLab and was measured at the bulk of a 172 MB /usr/local/lib; ipykernel
+# plus jupyter_client is a fraction of that and loses nothing the app can use.
 RUN set -eux; \
     pip3 install --no-cache-dir --break-system-packages \
-        notebook ipykernel; \
+        ipykernel jupyter_client jupyter_core; \
     python3 -m ipykernel install --name python3 --display-name "Python 3"; \
     pip3 install --no-cache-dir --break-system-packages jupyter-cpp-kernel || \
         echo "WARNING: jupyter-cpp-kernel unavailable; C++ still compiles from the terminal"
@@ -93,6 +97,26 @@ RUN set -eux; \
     # blanket delete of *.a under /usr/lib previously failed the build with
     # "cannot find -lgcc". Only clearly unused archives go.
     find /usr/lib -name 'libLLVM*.a' -o -name 'libclang*.a' -delete 2>/dev/null || true; \
+    \
+    # GCC ships link-time-optimisation backends and a dump tool that a
+    # single-file compile never touches: lto1 and lto-dump are ~30 MB each.
+    rm -f /usr/lib/gcc/*/*/lto1 /usr/bin/*lto-dump* 2>/dev/null || true; \
+    \
+    # Sanitizer runtimes: useful on a workstation, dead weight in a phone image.
+    rm -f /usr/lib/*/libasan.so* /usr/lib/*/libtsan.so* \
+          /usr/lib/*/liblsan.so* /usr/lib/*/libubsan.so* 2>/dev/null || true; \
+    \
+    # cmake is kept; its test and packaging drivers are not.
+    rm -f /usr/bin/ctest /usr/bin/cpack 2>/dev/null || true; \
+    \
+    # ICU came in with clang and has no consumer now that clang is gone —
+    # node bundles its own. The verification stage below decides whether that
+    # is true; if anything still needs it, the build fails rather than ships.
+    rm -f /usr/lib/*/libicudata.so* /usr/lib/*/libicui18n.so* \
+          /usr/lib/*/libicuuc.so* 2>/dev/null || true; \
+    \
+    # TypeScript's compiler ships inside code-server's bundled extensions.
+    find /opt/code-server -name 'typescript.js' -size +4M -delete 2>/dev/null || true; \
     \
     # Python bytecode caches regenerate on demand.
     find / -name '*.pyc' -delete 2>/dev/null || true; \
