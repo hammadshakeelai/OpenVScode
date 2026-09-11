@@ -65,9 +65,13 @@ RUN set -eux; \
 RUN set -eux; \
     pip3 install --no-cache-dir --break-system-packages \
         ipykernel jupyter_client jupyter_core; \
-    python3 -m ipykernel install --name python3 --display-name "Python 3"; \
+    # --prefix pins where the kernelspec lands so it cannot end up somewhere
+    # the jupyter CLI does not search.
+    python3 -m ipykernel install --prefix=/usr/local --name python3 --display-name "Python 3"; \
     pip3 install --no-cache-dir --break-system-packages jupyter-cpp-kernel || \
-        echo "WARNING: jupyter-cpp-kernel unavailable; C++ still compiles from the terminal"
+        echo "WARNING: jupyter-cpp-kernel unavailable; C++ still compiles from the terminal"; \
+    python3 -m jupyter_cpp_kernel.install --prefix=/usr/local 2>/dev/null || \
+        echo "note: C++ kernel self-registered at install time, or is unavailable"
 
 # Loopback only, no password. Nothing off-device can reach it, and the app
 # cannot prompt for a password it has no way to know.
@@ -140,7 +144,19 @@ RUN set -eux; \
     /tmp/t; \
     printf 'print("py ok")\n' > /tmp/t.py; \
     python3 /tmp/t.py; \
+    echo "--- jupyter ---"; \
+    echo "  cli:    $(command -v jupyter || echo MISSING)"; \
+    jupyter --paths 2>/dev/null | head -20; \
     jupyter kernelspec list; \
+    # `kernelspec list` exits 0 even with nothing registered, so it cannot be
+    # the check on its own. A previous trim shipped an image with zero kernels
+    # and this stage reported success. Count them instead.
+    kernels=$(jupyter kernelspec list 2>/dev/null | tail -n +2 | grep -c . || true); \
+    echo "  kernels registered: $kernels"; \
+    if [ "$kernels" -lt 1 ]; then \
+        echo "ERROR: no Jupyter kernels registered — refusing to publish" >&2; \
+        exit 1; \
+    fi; \
     rm -f /tmp/t /tmp/t.cpp /tmp/t.py
 
 # --- make the image runnable on Android -----------------------------------
