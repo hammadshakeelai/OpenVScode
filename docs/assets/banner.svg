@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 280" width="760" height="280" role="img" aria-label="OpenVScode Mobile IDE - a full VS Code IDE that runs on your phone, with Python 3, C++ Clang 20 and Jupyter">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 280" width="760" height="280" role="img" aria-label="OpenVScode Mobile IDE - a full VS Code IDE that runs on your phone, with Python 3, C++ GCC 12 and Jupyter">
   <title>OpenVScode Mobile IDE</title>
 
   <defs>
@@ -54,7 +54,7 @@
       <text x="197" y="248" fill="#ffd050">Python 3</text>
 
       <rect x="281" y="224" width="210" height="36" rx="18" fill="#ffffff" fill-opacity="0.06" stroke="#3d434b"/>
-      <text x="386" y="248" fill="#ff7b72">C++ · Clang 20</text>
+      <text x="386" y="248" fill="#ff7b72">C++ · GCC 12</text>
 
       <rect x="505" y="224" width="128" height="36" rx="18" fill="#ffffff" fill-opacity="0.06" stroke="#3d434b"/>
       <text x="569" y="248" fill="#f0883e">Jupyter</text>

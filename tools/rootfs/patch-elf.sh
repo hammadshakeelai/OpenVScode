@@ -211,11 +211,17 @@ echo "  left alone (relative):       $link_skipped"
 # host cannot exec these directly — their interpreter now points at an Android
 # path — but it can invoke the loader explicitly, which exercises the same
 # headers. If this fails, the image is broken and must not ship.
-if [ "$ARCH" = "amd64" ] && [ "$(uname -m)" = "x86_64" ]; then
+#
+# This runs for arm64 too. The runner is x86_64, but the workflow registers
+# qemu-user binfmt handlers for the arm64 build, and those apply to any arm64
+# binary the shell invokes — so the arm64 image can be checked here instead of
+# shipping unverified, which is what happened for several builds.
+if [ "$ARCH" = "amd64" ] || command -v qemu-aarch64-static >/dev/null 2>&1 \
+   || [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
     echo
-    echo "runtime check on patched binaries"
+    echo "runtime check on patched $ARCH binaries"
     LOADER_LOCAL="$TREE/lib/$TRIPLET/$LOADER_NAME"
-    LIBPATH_LOCAL="$TREE/lib/$TRIPLET:$TREE/usr/lib/$TRIPLET:$TREE/lib:$TREE/usr/lib:$TREE/usr/lib/llvm-14/lib:$TREE/opt/code-server/lib"
+    LIBPATH_LOCAL="$TREE/lib/$TRIPLET:$TREE/usr/lib/$TRIPLET:$TREE/lib:$TREE/usr/lib:$TREE/usr/local/lib:$TREE/opt/code-server/lib"
 
     check() {
         name="$1"; shift
@@ -234,7 +240,7 @@ if [ "$ARCH" = "amd64" ] && [ "$(uname -m)" = "x86_64" ]; then
     check g++        "$TREE/usr/bin/g++" --version || failed=1
 
     if [ "$failed" -ne 0 ]; then
-        echo "ERROR: patched binaries do not run. Refusing to publish a broken image." >&2
+        echo "ERROR: patched $ARCH binaries do not run. Refusing to publish a broken image." >&2
         exit 1
     fi
 fi

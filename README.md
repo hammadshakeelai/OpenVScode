@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="OpenVScode Mobile IDE — a full VS Code environment that runs on your phone, with Python 3, C++ (Clang) and Jupyter kernels" width="100%">
+  <img src="docs/assets/banner.svg" alt="OpenVScode Mobile IDE — a full VS Code environment that runs on your phone, with Python 3, C++ (GCC) and Jupyter kernels" width="100%">
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/platform-Android%20%7C%20Linux%20ARM64-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license">
   <img src="https://img.shields.io/badge/python-3.11+-yellow.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/c++-Clang%2020-red.svg" alt="Clang 20">
+  <img src="https://img.shields.io/badge/c++-GCC%2012-red.svg" alt="GCC 12">
   <img src="https://img.shields.io/badge/jupyter-Python%20%26%20C%2B%2B%20Kernels-orange.svg" alt="Jupyter kernels">
 </p>
 
@@ -143,17 +143,23 @@ Then open `http://127.0.0.1:8080` in your browser.
 - **Language Server**: Autocomplete, type hinting, and auto-imports.
 - **1-Click Execution**: Dedicated Run button for Python scripts.
 
-### 2. ⚡ C / C++ Environment (Clang & Clangd)
-- **Modern C++20 Compiler**: `clang`, `clang++`, `make`, `cmake`, `ninja`.
-- **IntelliSense with `clangd`**: Instant syntax checking, definition jump, and refactoring on ARM64.
-- **Debugging**: `lldb` / `gdb` integration.
-- **Clangd Config**: Pre-configured `compile_flags.txt` tuned for mobile CPU constraints (`-j=2`).
+### 2. ⚡ C / C++ Environment
+- **Modern C++20 compiler**: `g++`, `gcc`, `make`, `cmake`.
+- **Why GCC and not Clang:** in the downloadable IDE image, Clang costs about
+  198 MB — `libLLVM` alone is 98 MB — out of a 1.2 GB filesystem, and `g++`
+  compiles the same C++20 for a small fraction of that. On a phone, where the
+  image has to be downloaded before anything works, that trade is worth making.
+  The Termux path still installs Clang, since there the toolchain is fetched
+  on-device rather than shipped.
+- **Verified in CI**: every published image compiles a real C++20 program before
+  it is allowed to ship.
 
 ### 3. 📓 Jupyter Notebooks (Dual-Kernel: Python & C++)
 - **Native Notebook UI**: Interactive cells directly inside VS Code (`ms-toolsai.jupyter`).
 - **Python Kernel**: Standard `ipykernel`.
-- **C++ Kernel (`jupyter-cpp-kernel`)**: **Just as easy as Python!** Installed via `pip`, it compiles and runs C++ code cells on the fly with `clang++`.
-- Optional: Support for `xeus-cpp` (Clang-REPL) in PRoot for persistent cell variables.
+- **C++ kernel (`jupyter-cpp-kernel`)**: installed via `pip`; compiles and runs
+  C++ cells on the fly. The published image registers kernels for C++98 through
+  C++23.
 
 ### 4. 📱 Mobile-First Ergonomics
 - **No Wasted Screen Space**: Minimap and glyph margins disabled; word-wrap enabled.
