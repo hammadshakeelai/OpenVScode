@@ -711,15 +711,18 @@ public class MainActivity extends AppCompatActivity {
     private static final String TERMUX_PKG = "com.termux";
     private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
     private static final String TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash";
-    private static final String REPO_URL = "https://github.com/hammadshakeelai/OpenVScode.git";
+    private static final String INSTALL_URL =
+            "https://raw.githubusercontent.com/hammadshakeelai/OpenVScode/master/install.sh";
 
-    /** The whole provision, as one non-interactive shell line. */
+    /**
+     * The whole provision, as one shell line — the same one the README tells
+     * people to paste, so the button and the documented command cannot drift
+     * apart. install.sh is idempotent, so tapping this twice is harmless.
+     */
     private static String bootstrapCommand() {
         return "echo '=== OpenVScode Mobile: setting up your IDE ==='; "
-                + "pkg install -y git >/dev/null 2>&1; "
-                + "cd \"$HOME\" && { [ -d OpenVScode ] || git clone --depth 1 " + REPO_URL + "; } "
-                + "&& cd OpenVScode && git pull -q 2>/dev/null; "
-                + "bash setup.sh && bash start.sh";
+                + "pkg install -y curl >/dev/null 2>&1; "
+                + "curl -fsSL " + INSTALL_URL + " | bash";
     }
 
     private boolean isTermuxInstalled() {

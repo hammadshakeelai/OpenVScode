@@ -110,23 +110,46 @@ It expects the IDE server described below to be reachable on `127.0.0.1:8080`.
 > **Set up Python, C++ & Jupyter automatically** — the app runs all of this for you
 > through Termux.
 
-### Step 1: Install Termux
-Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/). The Google
-Play build is deprecated and will not work.
+### Step 1 — Install Termux
 
-### Step 2: Clone and run the installer
+Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/).
+The Google Play build is abandoned and will not work.
+
+### Step 2 — Paste one line
+
+Open Termux and paste this. It is the only command you need:
+
 ```bash
-pkg update && pkg install -y git
-git clone https://github.com/hammadshakeelai/OpenVScode.git
-cd OpenVScode
-bash setup.sh
+pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/hammadshakeelai/OpenVScode/master/install.sh | bash
 ```
 
-### Step 3: Launch
+It installs `curl`, downloads the installer, and runs it. The installer then
+does this, announcing each step as it goes:
+
+| Step | What it does |
+|---|---|
+| **Checks Termux and your CPU** | Stops immediately with a clear message if you are not in Termux, instead of failing halfway through. |
+| **Asks for storage access** | One Android prompt. Tap Allow so the IDE can open your Downloads and Documents. Skipped if already granted. |
+| **Downloads the scripts** | Installs `git`, clones this repository to `~/OpenVScode`. Updates it instead if it is already there. |
+| **Installs the toolchain** | Python 3, C/C++ (Clang), Node, code-server and the Jupyter kernels. **This takes 10–30 minutes** depending on your phone — keep the screen on. |
+| **Starts the IDE** | On `127.0.0.1:8080`, and waits until it genuinely answers before saying it worked. |
+
+Everything is written to `~/openvscode-install.log`.
+
+> [!TIP]
+> **If it stops partway, paste the same line again.** Every step checks whether
+> it is already done, so re-running resumes rather than starting over.
+
+### Step 3 — Open it
+
+Either open the **OpenVScode** app — it finds `127.0.0.1:8080` on its own — or
+visit `http://127.0.0.1:8080` in Chrome.
+
+To start the IDE again on a later day:
+
 ```bash
-./start.sh
+cd ~/OpenVScode && ./start.sh
 ```
-Then open `http://127.0.0.1:8080` in your browser.
 
 > [!TIP]
 > **No APK needed for a fullscreen app:** in Chrome/Edge/Brave, tap ⋮ →
