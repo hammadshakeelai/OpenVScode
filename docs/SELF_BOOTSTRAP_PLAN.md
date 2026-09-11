@@ -410,3 +410,65 @@ can answer it.**
   which §4 already rejected as out of scope.
 - **Keep Termux as the engine**, which v1.0.5 already does and which needs none
   of this.
+
+
+---
+
+## 10. The arm64 answer: blocked, and not because of glibc
+
+Measured on a physical **Samsung Galaxy S23 Ultra (SM-S918U, arm64-v8a)**,
+Android 15, with the app launching each binary itself.
+
+| launched by the app | exit |
+|---|---|
+| bionic `toybox true` | **0** |
+| arm64 glibc loader `--version` | **0** |
+| arm64 glibc `true` (with `libc.so.6` present) | **159 — SIGSYS** |
+| musl loader `--version` | 1 |
+| musl `busybox true` via its loader | **159 — SIGSYS** |
+
+Two conclusions, and the second is the one that matters.
+
+**arm64 is blocked exactly like x86_64.** This was the open question from §9.3
+and the answer is no — the emulator was not the problem. Both architectures
+behave identically.
+
+**It is not a glibc problem.** musl is killed the same way. Android's app
+seccomp filter rejects something both non-bionic libcs do during program
+startup, while the dynamic loader on its own is fine in both cases. So swapping
+Debian for Alpine, which §9.4 listed as the fallback, would not have helped —
+it would have cost a rebuild to learn the same thing.
+
+The only userland that runs unmodified under an Android app's seccomp filter is
+**bionic**. That is what Termux is, and it is why Termux works.
+
+### What this means for the design
+
+The self-bootstrapping rootfs, as built, cannot start its IDE. Everything
+around it is sound and verified — the image is correct, code-server genuinely
+serves HTTP from inside it, and the download/verify/extract path works on real
+hardware. The single missing step is that an Android app may not execute those
+binaries.
+
+Three ways forward, in order of how much they cost:
+
+1. **Termux as the engine.** Already shipped, already works, needs none of this.
+   The app drives the whole install through Termux's RUN_COMMAND service.
+2. **proot.** Worth revisiting for a reason that only became clear here: a
+   ptracer can intercept `SIGSYS` and emulate the rejected syscall. That is
+   plausibly how UserLAnd and Andronix run Debian userlands from an app on real
+   hardware — not for path virtualisation, which the ELF patching already
+   solved, but as a seccomp escape. Unproven, and proot still has to be built
+   for Android.
+3. **A bionic userland** — rebuilding Termux's package set. Rejected in §4 as
+   out of scope, and nothing here changes that.
+
+### What was not wasted
+
+The ELF interpreter patching, shebang rewriting and symlink repointing are all
+correct and would be needed by any of these paths. So is the installer. The
+runtime guard caught two corrupt images before publication. And the image
+shrank from 402 MB to 112 MB along the way.
+
+What was wrong was the assumption that a normal Linux userland can execute
+under an Android app. It cannot, on either architecture, with either libc.
