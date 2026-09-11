@@ -18,10 +18,11 @@
 # program. code-server spawns exactly such a child and dies with "cannot open
 # shared object file". Measured on an emulator, not theorised.
 #
-# So instead: patch the recorded interpreter and RPATH to absolute paths inside
-# the installed rootfs, the way Nix does for its store. Binaries then exec
-# directly, self-reexec works, children need nothing special, and no ptrace
-# supervisor is required at runtime.
+# So instead: patch each executable's recorded interpreter to an absolute path
+# inside the installed rootfs, the way Nix does for its store. Binaries then
+# exec directly, self-reexec works, and no ptrace supervisor is needed. RPATH is
+# deliberately left alone — writing one corrupts the larger binaries — so the
+# launcher supplies LD_LIBRARY_PATH through a bionic shell wrapper instead.
 #
 # This runs on the CI host against the *extracted* filesystem, deliberately.
 # Running it inside the container would have it patch bash, find and patchelf
@@ -94,14 +95,9 @@ while IFS= read -r -d '' f; do
     # RPATH is the right place for this: it travels with the binary that needs
     # it and is invisible to everything else.
     if readelf -l "$f" 2>/dev/null | grep -q "Requesting program interpreter"; then
-        # Interpreter and RPATH are set in SEPARATE invocations. Doing both at
-        # once, across executables *and* libraries, is what corrupted node,
-        # python3.11 and clang badly enough that they segfaulted before the
-        # loader printed anything. The runtime check at the end of this script
-        # is what decides whether this is safe — not this comment.
         # Interpreter only. Setting RPATH as well corrupts python3.11, node and
-        # clang — the runtime check below caught bash passing while all three
-        # failed, both when combined with --set-interpreter and as a separate
+        # the compiler — the runtime check below caught bash passing while the
+        # others failed, both combined with --set-interpreter and as a separate
         # invocation. Library lookup is handled by the launcher instead, through
         # a bionic shell wrapper that scopes LD_LIBRARY_PATH to the glibc
         # process tree rather than letting it reach Android's own binaries.
@@ -235,7 +231,7 @@ if [ "$ARCH" = "amd64" ] && [ "$(uname -m)" = "x86_64" ]; then
     check bash       "$TREE/bin/bash" -c 'echo bash ok' || failed=1
     check python3    "$TREE/usr/bin/python3.11" -c 'print("python ok")' || failed=1
     check node       "$TREE/opt/code-server/lib/node" --version || failed=1
-    check clang      "$TREE/usr/bin/clang" --version || failed=1
+    check g++        "$TREE/usr/bin/g++" --version || failed=1
 
     if [ "$failed" -ne 0 ]; then
         echo "ERROR: patched binaries do not run. Refusing to publish a broken image." >&2

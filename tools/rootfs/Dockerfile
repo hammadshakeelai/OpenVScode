@@ -16,8 +16,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
 # Deliberately NOT installed:
-#   llvm    — the full LLVM tool suite plus a very large set of static archives.
-#             Compiling a single file needs clang, not llvm-*.
+#   clang   — measured 198 MB of the unpacked image across libLLVM (98 MB),
+#     + llvm    libclang-cpp (52 MB), libclang (27 MB) and libz3 (21 MB). g++
+#             compiles the same C++20 for a small fraction of that, and removing
+#             clang drops its ICU dependency too. If Clang is wanted back it is
+#             one word in the apt line below — at roughly +60 MB compressed.
 #   nodejs  — code-server ships its own node; Debian's adds a second copy.
 #   npm     — large, and nothing here installs packages from it at runtime.
 RUN set -eux; \
@@ -25,7 +28,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         ca-certificates curl wget git xz-utils \
         python3 python3-pip python3-venv python3-dev \
-        clang lld make cmake pkg-config \
+        g++ make cmake pkg-config \
         libstdc++6 zlib1g \
         procps less nano; \
     apt-get clean; \
@@ -85,11 +88,11 @@ RUN set -eux; \
     find /opt/code-server -name '*.js.map' -delete 2>/dev/null || true; \
     find /opt/code-server -name '*.ts' -delete 2>/dev/null || true; \
     \
-    # LLVM's static archives only. A blanket delete of *.a under /usr/lib was
-    # tried and failed the build: clang links libgcc.a for compiler intrinsics
-    # even when producing a dynamic executable, giving "cannot find -lgcc".
-    # Anything under /usr/lib/gcc stays.
-    find /usr/lib/llvm-* -name '*.a' -delete 2>/dev/null || true; \
+    # Nothing links statically here, but g++ needs libgcc.a and libstdc++.a
+    # for compiler intrinsics even when producing a dynamic executable — a
+    # blanket delete of *.a under /usr/lib previously failed the build with
+    # "cannot find -lgcc". Only clearly unused archives go.
+    find /usr/lib -name 'libLLVM*.a' -o -name 'libclang*.a' -delete 2>/dev/null || true; \
     \
     # Python bytecode caches regenerate on demand.
     find / -name '*.pyc' -delete 2>/dev/null || true; \
@@ -106,10 +109,10 @@ RUN set -eux; \
 # than shipping a rootfs whose compiler is gone.
 RUN set -eux; \
     python3 --version; \
-    clang --version | head -1; \
+    g++ --version | head -1; \
     code-server --version | head -1; \
     printf '#include <cstdio>\nint main(){std::printf("cpp ok\\n");return 0;}\n' > /tmp/t.cpp; \
-    clang++ -std=c++20 /tmp/t.cpp -o /tmp/t; \
+    g++ -std=c++20 /tmp/t.cpp -o /tmp/t; \
     /tmp/t; \
     printf 'print("py ok")\n' > /tmp/t.py; \
     python3 /tmp/t.py; \
