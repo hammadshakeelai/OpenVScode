@@ -7,7 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.net.wifi.WifiManager;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -22,57 +22,64 @@ public class VScodeService extends Service {
     public static final String ACTION_STOP = "com.openvscode.mobile.ACTION_STOP";
 
     private PowerManager.WakeLock wakeLock;
-    private WifiManager.WifiLock wifiLock;
+    private static final long WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        acquireLocks();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            Log.i(TAG, "Stop action received. Terminating service...");
-            stopSelf();
+            endSessionSupport();
             return START_NOT_STICKY;
         }
 
-        Notification notification = buildNotification();
-        startForeground(NOTIFICATION_ID, notification);
-        Log.i(TAG, "OpenVScode foreground service started with WakeLock active.");
+        try {
+            Notification notification = buildNotification();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            acquireWakeLock();
+        } catch (RuntimeException e) {
+            // The user can leave the Activity between dispatch and promotion.
+            // A refused foreground start must not crash an otherwise usable IDE.
+            Log.w(TAG, "Android declined background session support", e);
+            endSessionSupport();
+        }
 
-        return START_STICKY;
+        // Termux owns the server process. Recreating this service after a kill
+        // would imply a live session and consume power without a connected UI.
+        return START_NOT_STICKY;
     }
 
-    private void acquireLocks() {
+    private void acquireWakeLock() {
         try {
+            if (wakeLock != null && wakeLock.isHeld()) return;
             PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (powerManager != null) {
                 wakeLock = powerManager.newWakeLock(
                         PowerManager.PARTIAL_WAKE_LOCK,
-                        "OpenVScode::CpuCompilationLock"
+                        "OpenVScode::SessionSupport"
                 );
-                // Hold wake lock with a 30-minute safety timeout to prevent permanent battery drain if orphaned
-                wakeLock.acquire(30 * 60 * 1000L);
-            }
-
-            WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wifiManager != null) {
-                wifiLock = wifiManager.createWifiLock(
-                        WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                        "OpenVScode::WifiLock"
-                );
-                wifiLock.acquire();
+                wakeLock.setReferenceCounted(false);
+                // This is a bounded convenience. Termux's own notification and
+                // wake lock manage long compilations after the app is closed.
+                wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to acquire power/wifi locks", e);
+            Log.w(TAG, "Device could not acquire the temporary wake lock", e);
         }
     }
 
     private Notification buildNotification() {
         Intent openAppIntent = new Intent(this, MainActivity.class);
+        openAppIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pendingOpen = PendingIntent.getActivity(
                 this, 0, openAppIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
@@ -88,10 +95,14 @@ public class VScodeService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(getString(R.string.service_running_title))
                 .setContentText(getString(R.string.service_running_desc))
+                .setStyle(new NotificationCompat.BigTextStyle()
+                        .bigText(getString(R.string.service_running_desc)))
                 .setSmallIcon(R.drawable.ic_launcher)
                 .setContentIntent(pendingOpen)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, getString(R.string.action_stop), pendingStop)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
     }
@@ -100,10 +111,10 @@ public class VScodeService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "OpenVScode Background Server",
+                    "OpenVScode session support",
                     NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Keeps the local IDE and compilers running in the background");
+            channel.setDescription("Temporary device wake lock while working in the IDE");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
@@ -113,14 +124,22 @@ public class VScodeService extends Service {
 
     @Override
     public void onDestroy() {
+        releaseWakeLock();
+        stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
+    }
+
+    private void endSessionSupport() {
+        releaseWakeLock();
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
+    }
+
+    private void releaseWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
         }
-        if (wifiLock != null && wifiLock.isHeld()) {
-            wifiLock.release();
-        }
-        Log.i(TAG, "OpenVScode service destroyed. Locks released.");
+        wakeLock = null;
     }
 
     @Override

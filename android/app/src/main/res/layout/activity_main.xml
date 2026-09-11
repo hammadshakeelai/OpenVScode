@@ -1,138 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/appRoot" android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@color/bg_dark">
-
-    <!-- Fullscreen WebView -->
-    <WebView
-        android:id="@+id/webView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/keyboardToolbar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Native Coding Keybar (Docked above keyboard) -->
-    <HorizontalScrollView
-        android:id="@+id/keyboardToolbar"
-        android:layout_width="0dp"
-        android:layout_height="44dp"
-        android:background="@color/toolbar_bg"
-        android:scrollbars="none"
-        android:paddingStart="4dp"
-        android:paddingEnd="4dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="3dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <LinearLayout
-            android:id="@+id/keysContainer"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="horizontal"
-            android:gravity="center_vertical" />
-    </HorizontalScrollView>
-
-    <!-- Splash / Loading Overlay -->
-    <LinearLayout
-        android:id="@+id/loadingOverlay"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:background="@color/bg_dark"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="24dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <ImageView
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:src="@drawable/ic_launcher"
-            android:contentDescription="@string/app_name" />
-
-        <ProgressBar
-            android:id="@+id/progressBar"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginTop="32dp"
-            android:indeterminateTint="@color/accent_blue" />
-
-        <TextView
-            android:id="@+id/statusTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/server_starting"
-            android:textColor="@color/white"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/statusSubtitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/server_loading_sub"
-            android:textColor="@color/key_btn_text"
-            android:textSize="13sp"
-            android:gravity="center"
-            android:lineSpacingMultiplier="1.2" />
-
-        <LinearLayout
-            android:id="@+id/serverConfigContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:orientation="vertical"
-            android:gravity="center_horizontal"
-            android:visibility="gone">
-
-            <EditText
-                android:id="@+id/editServerUrl"
-                android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:background="@color/input_bg"
-                android:textColor="@color/white"
-                android:textColorHint="@color/text_hint"
-                android:hint="@string/server_url_hint"
-                android:textSize="14sp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:inputType="textUri"
-                android:singleLine="true" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnConnect"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/btn_save_connect"
-                    android:backgroundTint="@color/accent_blue"
-                    android:layout_marginEnd="8dp" />
-
-                <Button
-                    android:id="@+id/btnRetry"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/retry"
-                    android:backgroundTint="@color/key_btn_bg" />
-            </LinearLayout>
+    <LinearLayout android:id="@+id/editorContainer" android:layout_width="match_parent"
+        android:layout_height="match_parent" android:orientation="vertical" android:visibility="gone">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp"
+            android:paddingHorizontal="8dp" android:gravity="center_vertical" android:background="@color/toolbar_bg">
+            <TextView android:id="@+id/editorLabel" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="OpenVScode" android:textSize="14sp"
+                android:textColor="@color/white" android:paddingStart="8dp" android:paddingEnd="4dp" />
+            <Button android:id="@+id/sessionButton" style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content" android:layout_height="48dp" android:text="Session"
+                android:textAllCaps="false" android:textColor="@color/accent_blue" />
         </LinearLayout>
-
+        <FrameLayout android:id="@+id/webContainer" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" />
+        <HorizontalScrollView android:id="@+id/keyboardToolbar" android:layout_width="match_parent"
+            android:layout_height="52dp" android:background="@color/toolbar_bg" android:scrollbars="none"
+            android:fillViewport="true" android:paddingHorizontal="4dp">
+            <LinearLayout android:id="@+id/keysContainer" android:layout_width="wrap_content"
+                android:layout_height="match_parent" android:orientation="horizontal" android:gravity="center_vertical" />
+        </HorizontalScrollView>
     </LinearLayout>
-
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <ScrollView android:id="@+id/setupScroll" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:fillViewport="true" android:clipToPadding="false">
+        <LinearLayout android:id="@+id/setupContent" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:padding="24dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+                <ImageView android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_launcher"
+                    android:importantForAccessibility="no" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp"
+                    android:text="OpenVScode" android:textSize="18sp" android:textStyle="bold" android:textColor="@color/white" />
+            </LinearLayout>
+            <TextView android:id="@+id/eyebrow" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="28dp" android:text="YOUR PHONE. YOUR WORKSPACE." android:textSize="11sp"
+                android:letterSpacing="0.12" android:textColor="@color/accent_blue" />
+            <TextView android:id="@+id/statusTitle" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="Let’s get you\ncoding." android:textColor="@color/white"
+                android:textSize="34sp" android:fontFamily="sans-serif-medium" android:lineSpacingExtra="1dp" />
+            <TextView android:id="@+id/statusSubtitle" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="VS Code, a terminal, Python and C++ on your Android. We’ll walk you through the setup."
+                android:textColor="@color/key_btn_text" android:textSize="15sp" android:lineSpacingExtra="4dp" />
+            <LinearLayout android:id="@+id/stepsContainer" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="24dp" android:orientation="vertical" android:padding="16dp"
+                android:background="@drawable/setup_panel" />
+            <LinearLayout android:id="@+id/detailContainer" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:layout_marginTop="20dp" />
+            <ProgressBar android:id="@+id/installProgress" style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent" android:layout_height="6dp" android:layout_marginTop="20dp"
+                android:progressTint="@color/accent_blue" android:indeterminateTint="@color/accent_blue" android:visibility="gone" />
+            <TextView android:id="@+id/progressCaption" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" android:textSize="12sp" android:textColor="@color/key_btn_text" android:visibility="gone" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/primaryButton"
+                android:layout_width="match_parent" android:layout_height="60dp" android:layout_marginTop="20dp"
+                android:text="Get started" android:textAllCaps="false" android:textSize="16sp" android:textStyle="bold"
+                android:textColor="@color/bg_dark" android:backgroundTint="@color/accent_blue" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/secondaryButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent"
+                android:layout_height="56dp" android:textAllCaps="false" android:textSize="14sp"
+                android:textColor="@color/accent_blue" android:visibility="gone" />
+            <TextView android:id="@+id/setupFootnote" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:text="One-time setup · No root needed" android:textColor="@color/text_hint"
+                android:textSize="12sp" android:gravity="center" />
+            <Button android:id="@+id/remoteButton" style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp"
+                android:text="Use an existing server" android:textAllCaps="false" android:textColor="@color/key_btn_text" />
+            <Button android:id="@+id/helpButton" style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent" android:layout_height="48dp" android:text="Help &amp; diagnostics"
+                android:textAllCaps="false" android:textColor="@color/text_hint" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

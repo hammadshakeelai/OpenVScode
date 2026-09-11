@@ -1,12 +1,12 @@
 <resources>
-    <color name="bg_dark">#181818</color>
+    <color name="bg_dark">#10161E</color>
     <color name="editor_bg">#1e1e1e</color>
-    <color name="accent_blue">#007acc</color>
-    <color name="accent_blue_active">#0098ff</color>
-    <color name="toolbar_bg">#252526</color>
-    <color name="key_btn_bg">#333333</color>
-    <color name="key_btn_text">#cccccc</color>
-    <color name="input_bg">#2d2d2d</color>
-    <color name="text_hint">#888888</color>
-    <color name="white">#ffffff</color>
+    <color name="accent_blue">#7AC7FF</color>
+    <color name="accent_blue_active">#AEDCFF</color>
+    <color name="toolbar_bg">#1B232D</color>
+    <color name="key_btn_bg">#293747</color>
+    <color name="key_btn_text">#BCCADB</color>
+    <color name="input_bg">#1B232D</color>
+    <color name="text_hint">#A0AFBF</color>
+    <color name="white">#F4F7FC</color>
 </resources>

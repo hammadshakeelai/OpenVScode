@@ -4,9 +4,9 @@
     <string name="server_loading_sub">Attempting connection to %1$s</string>
     <string name="server_not_found_title">Cannot Reach IDE Server</string>
     <string name="server_not_found_desc">Nothing responded at %1$s.\n(%2$s)\n\nEnter any address you can reach — an IP, a hostname, or a public URL — or scan your Wi‑Fi for one.</string>
-    <string name="service_running_title">OpenVScode IDE Connected</string>
-    <string name="service_running_desc">Server session active with background wake lock</string>
-    <string name="action_stop">Stop Session</string>
+    <string name="service_running_title">OpenVScode session active</string>
+    <string name="service_running_desc">Keeps your device awake for up to 30 minutes. Termux manages the IDE server separately.</string>
+    <string name="action_stop">Release wake lock</string>
     <string name="retry">Retry Connection</string>
     <string name="server_url_hint">IP, hostname, or https URL</string>
     <string name="btn_save_connect">Connect</string>

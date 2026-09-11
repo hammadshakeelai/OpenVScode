@@ -9,16 +9,11 @@ android {
     defaultConfig {
         applicationId = "com.openvscode.mobile"
         minSdk = 26
-        // Deliberately 28, not the platform maximum. Apps targeting <= 28 run in
-        // the untrusted_app_27 SELinux domain, which still permits execute on
-        // app_data_file — measured alive on API 36. That is the only path to
-        // running a downloaded glibc rootfs, since Android's bionic linker
-        // cannot load glibc binaries however they are invoked. See
-        // docs/SELF_BOOTSTRAP_PLAN.md §7. Forecloses Play Store distribution,
-        // which the approach already ruled out.
-        targetSdk = 28
-        versionCode = 8
-        versionName = "1.0.7"
+        // Termux owns the runtime. The shell no longer needs a legacy target
+        // or execution of downloaded binaries from its private directory.
+        targetSdk = 35
+        versionCode = 9
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -26,13 +21,6 @@ android {
         // emulator is x86_64. Building the others just inflates the APK.
         ndk {
             abiFilters += ["arm64-v8a", "x86_64"]
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
         }
     }
 
@@ -63,7 +51,23 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir("generated/runtimeAssets"))
+    buildFeatures { buildConfig = true }
 }
+
+// Ship the reviewed installer with the APK. Setup never depends on whichever
+// code happens to be at the tip of a remote branch on installation day.
+tasks.register("bundleRuntime", Sync) {
+    from(rootProject.projectDir.parentFile) {
+        include "install.sh", "setup.sh", "start.sh"
+        include "scripts/**", "config/**", "examples/**"
+        exclude "**/__pycache__/**", "**/*.pyc", "scripts/test_*.py"
+        filter(org.apache.tools.ant.filters.FixCrLfFilter, eol: org.apache.tools.ant.filters.FixCrLfFilter.CrLf.newInstance("lf"))
+    }
+    into(layout.buildDirectory.dir("generated/runtimeAssets/runtime"))
+}
+tasks.named("preBuild").configure { dependsOn("bundleRuntime") }
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")

@@ -2,1194 +2,492 @@ package com.openvscode.mobile;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.content.Intent;
-import android.content.SharedPreferences;
-import android.net.Uri;
-import android.content.pm.PackageManager;
+import android.app.AlertDialog;
+import android.content.*;
 import android.graphics.Color;
-import android.os.Build;
-import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.util.Log;
-import android.view.Gravity;
-import android.view.View;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.TextView;
-
+import android.graphics.Typeface;
+import android.net.Uri;
+import android.os.*;
+import android.provider.Settings;
+import android.view.*;
+import android.webkit.*;
+import android.widget.*;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
-import android.view.ViewGroup;
-
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.Socket;
-import java.net.URI;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Enumeration;
-import java.util.LinkedHashSet;
+import androidx.core.view.*;
+import org.json.*;
+import java.io.*;
+import java.net.*;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.*;
 
+/** Native setup and session shell. Termux owns all downloaded executables. */
 public class MainActivity extends AppCompatActivity {
-    private static final String TAG = "MainActivity";
-    private static final String PREFS_NAME = "openvscode_prefs";
-    private static final String KEY_SERVER_URL = "server_url";
-    private static final String KEY_RECENTS = "recent_servers";
-    private static final int MAX_RECENTS = 6;
-    /** Ports worth probing when scanning the local network for an IDE. */
-    private static final int[] SCAN_PORTS = {8080, 8100, 3000, 8000, 8443, 9000, 4444};
-    /** probeServer() verdicts. */
-    private static final int PROBE_NONE = 0;
-    private static final int PROBE_HTTP = 1;
-    private static final int PROBE_IDE = 2;
     public static final String DEFAULT_SERVER_URL = "http://127.0.0.1:8080";
-
-    private String currentServerUrl;
+    private static final int BLUE = Color.rgb(122,199,255), TEXT = Color.rgb(188,202,219);
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService network = Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
-
+    private View setup, editor;
+    private LinearLayout steps, detail, keys;
+    private TextView title, subtitle, caption, footnote;
+    private Button primary, secondary, remote;
+    private ProgressBar progress;
     private WebView webView;
-    private View loadingOverlay;
-    private ProgressBar progressBar;
-    private TextView statusTitle;
-    private TextView statusSubtitle;
-    private LinearLayout serverConfigContainer;
-    private EditText editServerUrl;
-    private Button btnConnect;
-    private Button btnRetry;
-    private View keyboardToolbar;
-    private LinearLayout keysContainer;
+    private ValueCallback<Uri[]> fileCallback;
+    private boolean foreground, checking, localReady, editorVisible, loadingPage, pageFailed;
+    private boolean ctrl, alt, notebooks, connectionError;
+    private int generation;
+    private String screen = "", notice = "", logs = "", serverUrl = DEFAULT_SERVER_URL;
+    private JSONObject runtimeStatus;
+    private final Runnable poll = new Runnable() {
+        @Override public void run() {
+            if (!foreground) return;
+            checkRuntime();
+            handler.postDelayed(this, 2500);
+        }
+    };
+    private final ActivityResultLauncher<String> permission = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(), granted -> {
+            notice = granted ? "" : "Android has not granted access. Enable it in App permissions.";
+            render(true);
+        });
+    private final ActivityResultLauncher<String> notifications = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(), granted -> {});
+    private final ActivityResultLauncher<Intent> files = registerForActivityResult(
+        new ActivityResultContracts.StartActivityForResult(), result -> {
+            if (fileCallback != null) {
+                fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.getResultCode(), result.getData()));
+                fileCallback = null;
+            }
+        });
 
-    private boolean isCtrlActive = false;
-    private boolean isAltActive = false;
-    private Button ctrlButton;
-    private Button altButton;
-
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private boolean isServerReady = false;
-    private boolean isServiceStarted = false;
-    private boolean awaitingFirstLoad = false;
-    private boolean autoDiscoveryDone = false;
-    private boolean autoConnectUsed = false;
-    private String pendingError = null;
-    private boolean loadErrored = false;
-    private LinearLayout recentsRow;
-    private Button btnScan;
-    private Button btnSetup;
-    private Button btnInstallRootfs;
-
-    // Runtime permission request for Android 13+ (POST_NOTIFICATIONS)
-    private final ActivityResultLauncher<String> requestPermissionLauncher =
-            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
-                Log.i(TAG, "Notification permission result: " + isGranted);
-            });
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         setContentView(R.layout.activity_main);
-
-        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        // Diagnostic, off by default. Run it with:
-        //   adb shell am start -n <pkg>/.MainActivity --ez run_probe true
-        if (getIntent() != null && getIntent().getBooleanExtra("run_probe", false)) {
-            BootstrapProbe.run(this);
-        }
-        currentServerUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
-
-        Intent startIntent = getIntent();
-        if (startIntent != null && startIntent.hasExtra("server_url")) {
-            String extraUrl = startIntent.getStringExtra("server_url");
-            if (extraUrl != null && !extraUrl.trim().isEmpty()) {
-                currentServerUrl = extraUrl.trim();
-                prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
-            }
-        }
-
-        webView = findViewById(R.id.webView);
-        loadingOverlay = findViewById(R.id.loadingOverlay);
-        progressBar = findViewById(R.id.progressBar);
-        statusTitle = findViewById(R.id.statusTitle);
-        statusSubtitle = findViewById(R.id.statusSubtitle);
-        serverConfigContainer = findViewById(R.id.serverConfigContainer);
-        editServerUrl = findViewById(R.id.editServerUrl);
-        btnConnect = findViewById(R.id.btnConnect);
-        btnRetry = findViewById(R.id.btnRetry);
-        keyboardToolbar = findViewById(R.id.keyboardToolbar);
-        keysContainer = findViewById(R.id.keysContainer);
-
-        // Adjust keyboardToolbar margin when software keyboard (IME) appears or disappears
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content), (v, windowInsets) -> {
-            int imeHeight = windowInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
-            int navBarHeight = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom;
-            int bottomInset = Math.max(imeHeight, navBarHeight);
-
-            if (keyboardToolbar != null) {
-                ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) keyboardToolbar.getLayoutParams();
-                if (lp != null && lp.bottomMargin != bottomInset) {
-                    lp.bottomMargin = bottomInset;
-                    keyboardToolbar.setLayoutParams(lp);
-                }
-            }
-            return windowInsets;
+        prefs = getSharedPreferences("openvscode_prefs", MODE_PRIVATE);
+        if (TermuxBridge.hasRuntime(this)) prefs.edit().putBoolean("core_installed", true).apply();
+        setup = findViewById(R.id.setupScroll); editor = findViewById(R.id.editorContainer);
+        steps = findViewById(R.id.stepsContainer); detail = findViewById(R.id.detailContainer);
+        keys = findViewById(R.id.keysContainer); title = findViewById(R.id.statusTitle);
+        subtitle = findViewById(R.id.statusSubtitle); caption = findViewById(R.id.progressCaption);
+        footnote = findViewById(R.id.setupFootnote); primary = findViewById(R.id.primaryButton);
+        secondary = findViewById(R.id.secondaryButton); remote = findViewById(R.id.remoteButton);
+        progress = findViewById(R.id.installProgress);
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.appRoot), (view, insets) -> {
+            androidx.core.graphics.Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom));
+            return insets;
         });
-
-        editServerUrl.setText(currentServerUrl);
-        buildServerTools();
-
-        // Setup WebView settings
-        initWebView();
-
-        // Populate bottom coding touchbar
-        setupKeybar();
-
-        // Connect button listener (saves URL and retries)
-        btnConnect.setOnClickListener(v -> {
-            String inputUrl = editServerUrl.getText().toString().trim();
-            if (!inputUrl.isEmpty()) {
-                // Stored raw on purpose. candidateUrls() settles the scheme and strips
-                // noise at connect time, so "192.168.1.5:8100", "my-box.local:3000" and
-                // "https://abc.ngrok.io/?tkn=x" are all valid things to type here.
-                currentServerUrl = inputUrl;
-                prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
-                startPollingCycle();
-            }
-        });
-
-        // Retry button listener
-        btnRetry.setOnClickListener(v -> startPollingCycle());
-
-        // Begin initial polling
-        startPollingCycle();
+        createWebView(); buildKeybar();
+        remote.setOnClickListener(v -> showRemoteDialog());
+        findViewById(R.id.helpButton).setOnClickListener(v -> showHelp());
+        findViewById(R.id.sessionButton).setOnClickListener(v -> showSession());
+        render(true);
+        if (state != null && state.getBoolean("editorVisible")) connect(state.getString("editorUrl", DEFAULT_SERVER_URL));
+        else if ("remote".equals(prefs.getString("mode", "local"))) connect(prefs.getString("server_url", DEFAULT_SERVER_URL));
+        else if (prefs.getBoolean("core_installed", false) && TermuxBridge.hasRunPermission(this)
+                && !TermuxBridge.readState(this).running) runRuntime(false);
     }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        if (intent != null && intent.hasExtra("server_url")) {
-            String extraUrl = intent.getStringExtra("server_url");
-            if (extraUrl != null && !extraUrl.trim().isEmpty()) {
-                currentServerUrl = extraUrl.trim();
-                prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
-                if (editServerUrl != null) {
-                    editServerUrl.setText(currentServerUrl);
-                }
-                startPollingCycle();
-            }
-        }
+    @Override protected void onStart() {
+        super.onStart(); foreground = true; render(true); handler.post(poll);
     }
-
-    private void requestNotificationPermission() {
-        // Kept, but it cannot succeed while we target 28. Measured on API 36:
-        // a legacy-target app calling this is auto-denied with no dialog, and
-        // the app sits at importance=NONE, so the foreground-service
-        // notification never appears. Enabling it requires Settings -> Apps ->
-        // OpenVScode -> Notifications. Guarding the call on targetSdk was tried
-        // and is worse: it stops the app asking on devices where it would work.
-        // Consequence: the notification is not a reliable way to stop the
-        // session, so onDestroy() stops the service and the wake lock carries
-        // its own 30-minute timeout.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
-            }
-        }
+    @Override protected void onStop() {
+        foreground = false; handler.removeCallbacks(poll); super.onStop();
     }
-
-    private void startPollingCycle() {
-        serverConfigContainer.setVisibility(View.GONE);
-        progressBar.setVisibility(View.VISIBLE);
-        statusTitle.setText(R.string.server_starting);
-        statusSubtitle.setText(getString(R.string.server_loading_sub, currentServerUrl));
-        isServerReady = false;
-        autoDiscoveryDone = false;
-        ensureLocalIdeRunning();
-        pollServerReadiness();
+    @Override protected void onSaveInstanceState(Bundle out) {
+        out.putBoolean("editorVisible", editorVisible); out.putString("editorUrl", serverUrl);
+        super.onSaveInstanceState(out);
     }
-
-    /**
-     * If the rootfs is installed, make sure the IDE inside it is running. The
-     * existing poll against 127.0.0.1:8080 then picks it up like any other
-     * server, so nothing else in the connect path needs to know about this.
-     */
-    private void ensureLocalIdeRunning() {
-        if (!RootfsInstaller.isInstalled(this) || RootfsLauncher.isRunning()) {
-            return;
-        }
-        String problem = RootfsLauncher.pathProblem(this);
-        if (problem != null) {
-            Log.e(TAG, "refusing to launch: " + problem);
-            return;
-        }
-        // Its own thread: the shared executor is busy with the poll loop.
-        new Thread(() -> {
-            try {
-                RootfsLauncher.start(this);
-            } catch (Exception e) {
-                Log.e(TAG, "could not start the local IDE", e);
-            }
-        }, "ide-launch").start();
-    }
-
-    private void startBackgroundService() {
-        if (isServiceStarted) return;
-        // Ask for notification access here rather than at cold start: the prompt
-        // is only meaningful once there is actually a session to show, and at
-        // launch it lands on top of the connect screen before anything happens.
-        requestNotificationPermission();
-        Intent serviceIntent = new Intent(this, VScodeService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ContextCompat.startForegroundService(this, serviceIntent);
-        } else {
-            startService(serviceIntent);
-        }
-        isServiceStarted = true;
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private void initWebView() {
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setSupportZoom(false);
-        settings.setBuiltInZoomControls(false);
-        settings.setDisplayZoomControls(false);
-
-        // Force dark background
-        webView.setBackgroundColor(Color.parseColor("#181818"));
-
-        webView.setWebChromeClient(new WebChromeClient());
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return false; // Load all URLs inside the app
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                super.onPageStarted(view, url, favicon);
-                Log.i(TAG, "WebView onPageStarted: " + url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                Log.i(TAG, "WebView onPageFinished: " + url + " | currentServerUrl=" + currentServerUrl);
-                boolean matched = url != null && isMatchingServer(url, currentServerUrl);
-                // A server may redirect anywhere it likes: an https upgrade, an SSO hop,
-                // a tunnel hostname. Demanding host+port equality strands the user on the
-                // overlay with a fully loaded IDE behind it, so also accept the first
-                // clean load of a navigation we started ourselves.
-                boolean firstLoadOk = awaitingFirstLoad && !loadErrored
-                        && url != null && !url.startsWith("about:");
-                if (matched || firstLoadOk) {
-                    awaitingFirstLoad = false;
-                    Log.i(TAG, "Dismissing overlay (matched=" + matched + " firstLoadOk=" + firstLoadOk + ")");
-                    loadingOverlay.animate().alpha(0f).setDuration(300).withEndAction(() -> {
-                        loadingOverlay.setVisibility(View.GONE);
-                    });
-                    // Start background wake lock service only after server actually loads
-                    startBackgroundService();
-                } else {
-                    Log.w(TAG, "onPageFinished did not dismiss overlay: url=" + url + " server=" + currentServerUrl);
-                }
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
-                super.onReceivedError(view, request, error);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && request != null && request.isForMainFrame()) {
-                    loadErrored = true;
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    Log.e(TAG, "WebView onReceivedError: " + error.getDescription() + " code=" + error.getErrorCode() + " url=" + request.getUrl());
-                }
-            }
-        });
-    }
-
-    static boolean isMatchingServer(String pageUrl, String serverUrl) {
-        if (pageUrl == null || serverUrl == null) return false;
-        if (pageUrl.startsWith(serverUrl)) return true;
-        try {
-            URI pageUri = new URI(pageUrl);
-            URI serverUri = new URI(serverUrl);
-            String pageHost = pageUri.getHost();
-            String serverHost = serverUri.getHost();
-            int pagePort = pageUri.getPort() == -1 ? ("https".equalsIgnoreCase(pageUri.getScheme()) ? 443 : 80) : pageUri.getPort();
-            int serverPort = serverUri.getPort() == -1 ? ("https".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80) : serverUri.getPort();
-
-            if (("127.0.0.1".equals(serverHost) || "localhost".equalsIgnoreCase(serverHost)) &&
-                    ("127.0.0.1".equals(pageHost) || "localhost".equalsIgnoreCase(pageHost))) {
-                return pagePort == serverPort;
-            }
-            return pageHost != null && pageHost.equalsIgnoreCase(serverHost) && pagePort == serverPort;
-        } catch (Exception e) {
-            return pageUrl.startsWith(serverUrl);
-        }
-    }
-
-    private void pollServerReadiness() {
-        executor.execute(() -> {
-            int attempts = 0;
-            String lastError = "Connection refused";
-            while (!isServerReady && attempts < 8) {
-                attempts++;
-                final int currentAttempt = attempts;
-                mainHandler.post(() -> {
-                    if (!isServerReady) {
-                        statusSubtitle.setText("Attempt " + currentAttempt + "/8 — Connecting to " + currentServerUrl);
-                    }
-                });
-
-                for (String candidate : candidateUrls(currentServerUrl)) {
-                    try {
-                        HttpURLConnection conn = (HttpURLConnection) new URL(candidate).openConnection();
-                        conn.setConnectTimeout(4000);
-                        conn.setReadTimeout(4000);
-                        conn.setInstanceFollowRedirects(true);
-                        conn.setRequestMethod("GET");
-                        final int code = conn.getResponseCode();
-                        conn.disconnect();
-
-                        // ANY http status means something is listening and speaking HTTP.
-                        // A whitelist of "good" codes strands the user on real servers:
-                        // `code serve-web` answers 202 while it unpacks itself, proxies
-                        // answer 204/418, a booting IDE answers 502/503.
-                        if (code > 0) {
-                            isServerReady = true;
-                            final String winner = candidate;
-                            mainHandler.post(() -> {
-                                currentServerUrl = winner;
-                                prefs.edit().putString(KEY_SERVER_URL, winner).apply();
-                                rememberServer(winner);
-                                editServerUrl.setText(winner);
-                                Log.i(TAG, "Server reached (HTTP " + code + "). Loading: " + winner);
-                                awaitingFirstLoad = true;
-                                loadErrored = false;
-                                webView.loadUrl(winner);
-                            });
-                            return;
-                        }
-                    } catch (Exception e) {
-                        lastError = e.getClass().getSimpleName() + ": "
-                                + (e.getMessage() != null ? e.getMessage() : "unreachable");
-                        Log.w(TAG, "Attempt " + currentAttempt + " -> " + candidate + " failed: " + lastError);
-                    }
-                }
-
-                try {
-                    Thread.sleep(900);
-                } catch (InterruptedException e) {
-                    break;
-                }
-            }
-
-            if (!isServerReady) {
-                final String finalError = lastError;
-                // Do not dead-end on a form. Sweep the network first and, on the
-                // first failure of a launch, connect to what we find.
-                mainHandler.post(() -> beginAutoDiscovery(finalError));
-            }
-        });
-    }
-
-    // ---- Address handling ------------------------------------------------
-    //
-    // The app should reach whatever the user can reach: a server on the phone
-    // itself, a laptop on the same Wi-Fi, a box addressed by hostname, or an
-    // https tunnel on the public internet. Nothing below assumes an address.
-
-    /**
-     * Expands loose input into an ordered list of URLs to try.
-     * Accepts "192.168.1.5:8100", "localhost:8080", "my-box.local",
-     * "https://abc.ngrok.io", "10.0.0.4:8443/?tkn=secret".
-     * An explicit scheme is honoured as typed; without one, local addresses are
-     * tried over http first and public ones over https first.
-     */
-    static List<String> candidateUrls(String raw) {
-        List<String> out = new ArrayList<>();
-        if (raw == null) return out;
-        String s = raw.trim().replaceAll("\\s+", "");
-        if (s.isEmpty()) return out;
-
-        String scheme = null;
-        int sep = s.indexOf("://");
-        if (sep > 0) {
-            scheme = s.substring(0, sep).toLowerCase(Locale.ROOT);
-            s = s.substring(sep + 3);
-        }
-        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
-        if (s.isEmpty()) return out;
-
-        if (scheme != null) {
-            out.add(scheme + "://" + s);
-            return out;
-        }
-        if (isLocalAddress(hostOf(s))) {
-            out.add("http://" + s);
-            out.add("https://" + s);
-        } else {
-            out.add("https://" + s);
-            out.add("http://" + s);
-        }
-        return out;
-    }
-
-    /** Host portion of an authority such as "1.2.3.4:8100/path?q=1". */
-    static String hostOf(String authority) {
-        if (authority == null) return "";
-        String h = authority;
-        int cut = h.indexOf('/');
-        if (cut >= 0) h = h.substring(0, cut);
-        cut = h.indexOf('?');
-        if (cut >= 0) h = h.substring(0, cut);
-        int at = h.lastIndexOf('@');
-        if (at >= 0) h = h.substring(at + 1);
-        if (h.startsWith("[")) {                     // IPv6 literal
-            int end = h.indexOf(']');
-            return end > 0 ? h.substring(0, end + 1) : h;
-        }
-        cut = h.indexOf(':');
-        if (cut >= 0) h = h.substring(0, cut);
-        return h;
-    }
-
-    /** Loopback, RFC1918, link-local, mDNS name, or a bare hostname. */
-    static boolean isLocalAddress(String host) {
-        if (host == null || host.isEmpty()) return false;
-        String h = host.toLowerCase(Locale.ROOT);
-        if (h.equals("localhost") || h.equals("::1") || h.equals("[::1]")) return true;
-        if (h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home")) return true;
-        if (h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.")) return true;
-        if (h.startsWith("169.254.")) return true;
-        if (h.startsWith("172.")) {
-            String[] parts = h.split("\\.");
-            if (parts.length > 1) {
-                try {
-                    int second = Integer.parseInt(parts[1]);
-                    if (second >= 16 && second <= 31) return true;
-                } catch (NumberFormatException ignored) { }
-            }
-        }
-        return !h.contains(".");                     // bare LAN hostname
-    }
-
-    // ---- Recent servers --------------------------------------------------
-
-    private void rememberServer(String url) {
-        Set<String> seen = new LinkedHashSet<>();
-        seen.add(url);
-        seen.addAll(recentServers());
-        StringBuilder sb = new StringBuilder();
-        int n = 0;
-        for (String s : seen) {
-            if (n++ >= MAX_RECENTS) break;
-            if (sb.length() > 0) sb.append('\n');
-            sb.append(s);
-        }
-        prefs.edit().putString(KEY_RECENTS, sb.toString()).apply();
-        mainHandler.post(this::renderRecents);
-    }
-
-    private List<String> recentServers() {
-        List<String> out = new ArrayList<>();
-        for (String s : prefs.getString(KEY_RECENTS, "").split("\n")) {
-            if (!s.trim().isEmpty()) out.add(s.trim());
-        }
-        return out;
-    }
-
-    /** Adds the scan button and the recents strip under the address box. */
-    private void buildServerTools() {
-        btnScan = new Button(this);
-        btnScan.setText(R.string.scan_wifi);
-        btnScan.setAllCaps(false);
-        btnScan.setTextSize(13f);
-        btnScan.setBackgroundColor(Color.parseColor("#333333"));
-        btnScan.setTextColor(Color.parseColor("#CCCCCC"));
-        btnScan.setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8));
-        LinearLayout.LayoutParams scanParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        scanParams.topMargin = dpToPx(10);
-        btnScan.setLayoutParams(scanParams);
-        btnScan.setOnClickListener(v -> scanLanManually());
-        serverConfigContainer.addView(btnScan);
-
-        buildInstallButton();
-        buildSetupButton();
-
-        recentsRow = new LinearLayout(this);
-        recentsRow.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        rowParams.topMargin = dpToPx(8);
-        recentsRow.setLayoutParams(rowParams);
-        serverConfigContainer.addView(recentsRow);
-
-        renderRecents();
-    }
-
-    private void renderRecents() {
-        if (recentsRow == null) return;
-        recentsRow.removeAllViews();
-        List<String> recents = recentServers();
-        if (recents.isEmpty()) return;
-        addRowLabel(getString(R.string.recent_label));
-        for (String url : recents) addServerChoice(url);
-    }
-
-    private void addRowLabel(String text) {
-        TextView label = new TextView(this);
-        label.setText(text);
-        label.setTextSize(12f);
-        label.setTextColor(Color.parseColor("#888888"));
-        label.setPadding(0, dpToPx(6), 0, dpToPx(2));
-        recentsRow.addView(label);
-    }
-
-    /** One tappable address under the input box. */
-    private void addServerChoice(final String url) {
-        Button b = new Button(this);
-        b.setText(url);
-        b.setAllCaps(false);
-        b.setTextSize(12f);
-        b.setTextColor(Color.parseColor("#CCCCCC"));
-        b.setBackgroundColor(Color.parseColor("#2a2a2a"));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dpToPx(4);
-        b.setLayoutParams(lp);
-        b.setOnClickListener(v -> {
-            editServerUrl.setText(url);
-            currentServerUrl = url;
-            prefs.edit().putString(KEY_SERVER_URL, url).apply();
-            startPollingCycle();
-        });
-        recentsRow.addView(b);
-    }
-
-
-    // ---- Self-contained install (no Termux) ------------------------------
-
-    /**
-     * Downloads and unpacks the Linux rootfs that carries Python, C++ and
-     * Jupyter. Unlike the Termux path this needs no second app — at the cost of
-     * a large one-time download, which is why the button states the size.
-     */
-    private void buildInstallButton() {
-        btnInstallRootfs = new Button(this);
-        btnInstallRootfs.setAllCaps(false);
-        btnInstallRootfs.setTextSize(14f);
-        btnInstallRootfs.setTextColor(Color.parseColor("#FFFFFF"));
-        btnInstallRootfs.setBackgroundColor(Color.parseColor("#005a9e"));
-        btnInstallRootfs.setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dpToPx(10);
-        btnInstallRootfs.setLayoutParams(lp);
-        refreshInstallButton();
-        btnInstallRootfs.setOnClickListener(v -> startRootfsInstall());
-        serverConfigContainer.addView(btnInstallRootfs, 0);
-    }
-
-    private void refreshInstallButton() {
-        if (btnInstallRootfs == null) return;
-        if (RootfsInstaller.archSuffix() == null) {
-            btnInstallRootfs.setText(R.string.install_unsupported_cpu);
-            btnInstallRootfs.setEnabled(false);
-        } else if (RootfsInstaller.isInstalled(this)) {
-            btnInstallRootfs.setText(R.string.install_reinstall);
-        } else {
-            btnInstallRootfs.setText(R.string.install_rootfs);
-        }
-    }
-
-    private void startRootfsInstall() {
-        btnInstallRootfs.setEnabled(false);
-        serverConfigContainer.setVisibility(View.GONE);
-        progressBar.setVisibility(View.VISIBLE);
-        statusTitle.setText(R.string.install_running_title);
-        statusSubtitle.setText(R.string.install_running_desc);
-
-        // A test build can point the installer at a local server:
-        //   adb shell am start -n <pkg>/.MainActivity --es rootfs_url http://10.0.2.2:8200
-        String override = getIntent() != null ? getIntent().getStringExtra("rootfs_url") : null;
-        RootfsInstaller.Progress progress = new RootfsInstaller.Progress() {
-            @Override
-            public void onStage(final String stage) {
-                mainHandler.post(() -> statusTitle.setText(stage));
-            }
-
-            @Override
-            public void onProgress(final long done, final long total) {
-                mainHandler.post(() -> {
-                    if (total > 0) {
-                        int pct = (int) (done * 100 / total);
-                        statusSubtitle.setText(getString(R.string.install_progress,
-                                pct, RootfsInstaller.human(done), RootfsInstaller.human(total)));
-                    } else {
-                        statusSubtitle.setText(RootfsInstaller.human(done));
-                    }
-                });
-            }
-
-            @Override
-            public void onComplete(final java.io.File rootfs) {
-                mainHandler.post(() -> {
-                    btnInstallRootfs.setEnabled(true);
-                    refreshInstallButton();
-                    Log.i(TAG, "rootfs ready at " + rootfs);
-                    // Straight into starting it — the point of installing.
-                    statusTitle.setText(R.string.install_done_title);
-                    statusSubtitle.setText(R.string.install_done_desc);
-                    currentServerUrl = DEFAULT_SERVER_URL;
-                    prefs.edit().putString(KEY_SERVER_URL, currentServerUrl).apply();
-                    startPollingCycle();
-                });
-            }
-
-            @Override
-            public void onError(final String message) {
-                mainHandler.post(() -> {
-                    progressBar.setVisibility(View.GONE);
-                    statusTitle.setText(R.string.install_failed_title);
-                    statusSubtitle.setText(message);
-                    serverConfigContainer.setVisibility(View.VISIBLE);
-                    btnInstallRootfs.setEnabled(true);
-                    refreshInstallButton();
-                });
-            }
-        };
-
-        if (override != null && !override.trim().isEmpty()) {
-            Log.i(TAG, "installing from override URL " + override);
-            RootfsInstaller.install(this, override.trim(), progress);
-        } else {
-            RootfsInstaller.install(this, progress);
-        }
-    }
-
-    // ---- One-tap provisioning through Termux -----------------------------
-    //
-    // Termux exposes a RUN_COMMAND service that other apps may drive, so the
-    // whole Python / C++ / Jupyter install can be kicked off from a button here
-    // instead of the user typing commands. Two things gate it, both one-time:
-    // this app holds com.termux.permission.RUN_COMMAND, and Termux itself needs
-    // allow-external-apps=true in ~/.termux/termux.properties.
-
-    private static final String TERMUX_PKG = "com.termux";
-    private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
-    private static final String TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash";
-    private static final String INSTALL_URL =
-            "https://raw.githubusercontent.com/hammadshakeelai/OpenVScode/master/install.sh";
-
-    /**
-     * The whole provision, as one shell line — the same one the README tells
-     * people to paste, so the button and the documented command cannot drift
-     * apart. install.sh is idempotent, so tapping this twice is harmless.
-     */
-    private static String bootstrapCommand() {
-        return "echo '=== OpenVScode Mobile: setting up your IDE ==='; "
-                + "pkg install -y curl >/dev/null 2>&1; "
-                + "curl -fsSL " + INSTALL_URL + " | bash";
-    }
-
-    private boolean isTermuxInstalled() {
-        try {
-            getPackageManager().getPackageInfo(TERMUX_PKG, 0);
-            return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
-    }
-
-    /**
-     * Fires the install in a visible Termux session. Deliberately foreground:
-     * the toolchain build takes minutes and the user should see it moving
-     * rather than stare at a spinner wondering whether anything is happening.
-     */
-    private void launchTermuxSetup() {
-        if (!isTermuxInstalled()) {
-            promptInstallTermux();
-            return;
-        }
-        try {
-            Intent intent = new Intent();
-            intent.setClassName(TERMUX_PKG, TERMUX_SERVICE);
-            intent.setAction("com.termux.RUN_COMMAND");
-            intent.putExtra("com.termux.RUN_COMMAND_PATH", TERMUX_BASH);
-            intent.putExtra("com.termux.RUN_COMMAND_ARGUMENTS",
-                    new String[]{"-c", bootstrapCommand()});
-            intent.putExtra("com.termux.RUN_COMMAND_WORKDIR",
-                    "/data/data/com.termux/files/home");
-            intent.putExtra("com.termux.RUN_COMMAND_BACKGROUND", false);
-            intent.putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", "0");
-            startService(intent);
-
-            statusTitle.setText(R.string.setup_running_title);
-            statusSubtitle.setText(R.string.setup_running_desc);
-            Log.i(TAG, "Dispatched setup to Termux");
-        } catch (Exception e) {
-            // Almost always allow-external-apps being unset, which surfaces as a
-            // SecurityException. Say so plainly instead of a generic failure.
-            Log.e(TAG, "Termux RUN_COMMAND rejected", e);
-            statusTitle.setText(R.string.setup_blocked_title);
-            statusSubtitle.setText(R.string.setup_blocked_desc);
-        }
-    }
-
-    private void promptInstallTermux() {
-        statusTitle.setText(R.string.termux_missing_title);
-        statusSubtitle.setText(R.string.termux_missing_desc);
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://f-droid.org/en/packages/com.termux/")));
-        } catch (Exception e) {
-            Log.w(TAG, "Could not open the F-Droid page", e);
-        }
-    }
-
-    /** The provisioning button, shown above the manual address controls. */
-    private void buildSetupButton() {
-        btnSetup = new Button(this);
-        btnSetup.setText(isTermuxInstalled()
-                ? R.string.setup_auto : R.string.setup_install_termux);
-        btnSetup.setAllCaps(false);
-        btnSetup.setTextSize(14f);
-        btnSetup.setTextColor(Color.parseColor("#FFFFFF"));
-        btnSetup.setBackgroundColor(Color.parseColor("#0e8a3e"));
-        btnSetup.setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dpToPx(10);
-        btnSetup.setLayoutParams(lp);
-        btnSetup.setOnClickListener(v -> launchTermuxSetup());
-        serverConfigContainer.addView(btnSetup, 0);
-    }
-
-    // ---- Local network discovery ----------------------------------------
-
-    /** "192.168.18." for a device at 192.168.18.56, or null when off-LAN. */
-    static String subnetPrefixOf(String ipv4) {
-        if (ipv4 == null) return null;
-        int dot = ipv4.lastIndexOf('.');
-        return dot > 0 ? ipv4.substring(0, dot + 1) : null;
-    }
-
-    private String localIpv4() {
-        try {
-            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
-            while (ifaces != null && ifaces.hasMoreElements()) {
-                NetworkInterface nif = ifaces.nextElement();
-                if (!nif.isUp() || nif.isLoopback()) continue;
-                Enumeration<InetAddress> addrs = nif.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    InetAddress addr = addrs.nextElement();
-                    if (addr instanceof Inet4Address && addr.isSiteLocalAddress()) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Could not determine local IPv4", e);
-        }
-        return null;
-    }
-
-    /**
-     * Classifies what is answering at a URL.
-     *
-     * An open TCP port is not enough to connect to blindly — a home network is
-     * full of routers on 8080 and printers on 9000, and this phone's own subnet
-     * has an Apache install sitting on 8080 right next to the IDE. So fetch the
-     * root and look for something that identifies a code editor before treating
-     * a hit as somewhere worth sending the user.
-     */
-    private static int probeServer(String url, int timeoutMs) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setConnectTimeout(timeoutMs);
-            conn.setReadTimeout(timeoutMs);
-            conn.setInstanceFollowRedirects(true);
-            conn.setRequestMethod("GET");
-            int code = conn.getResponseCode();
-            if (code <= 0) return PROBE_NONE;
-
-            StringBuilder body = new StringBuilder();
-            InputStream in = null;
-            try {
-                in = (code >= 400) ? conn.getErrorStream() : conn.getInputStream();
-                if (in != null) {
-                    byte[] buf = new byte[8192];
-                    int n, total = 0;
-                    while (total < 65536 && (n = in.read(buf)) > 0) {
-                        body.append(new String(buf, 0, n, "UTF-8"));
-                        total += n;
-                    }
-                }
-            } catch (Exception ignored) {
-                // headers were enough to prove HTTP; body is a bonus
-            } finally {
-                if (in != null) try { in.close(); } catch (Exception ignored) { }
-            }
-
-            String text = body.toString().toLowerCase(Locale.ROOT);
-            if (text.contains("vscode") || text.contains("code-server")
-                    || text.contains("workbench") || text.contains("openvscode")) {
-                return PROBE_IDE;
-            }
-            return PROBE_HTTP;
-        } catch (Exception e) {
-            return PROBE_NONE;
-        } finally {
-            if (conn != null) conn.disconnect();
-        }
-    }
-
-    /**
-     * Runs after the configured address fails. Sweeps this device's own /24 for
-     * open IDE-ish ports, confirms over HTTP which are really editors, and — on
-     * the first failure of a launch — connects to one without being asked.
-     */
-    private void beginAutoDiscovery(String lastError) {
-        if (autoDiscoveryDone) {
-            showManualEntry(lastError);
-            return;
-        }
-        autoDiscoveryDone = true;
-        pendingError = lastError;
-
-        String prefix = subnetPrefixOf(localIpv4());
-        if (prefix == null) {
-            showManualEntry(lastError);
-            return;
-        }
-        progressBar.setVisibility(View.VISIBLE);
-        statusTitle.setText(R.string.scan_title);
-        statusSubtitle.setText(R.string.scan_running);
-        scanLan(prefix, !autoConnectUsed);
-    }
-
-    /** Manual entry point from the button; never auto-connects. */
-    private void scanLanManually() {
-        String prefix = subnetPrefixOf(localIpv4());
-        if (prefix == null) {
-            statusSubtitle.setText(R.string.scan_no_wifi);
-            return;
-        }
-        btnScan.setEnabled(false);
-        btnScan.setText(R.string.scan_running);
-        scanLan(prefix, false);
-    }
-
-    /**
-     * Two passes: a wide, cheap TCP sweep to find open ports, then an HTTP probe
-     * of only the handful that answered. Short timeouts and wide fan-out keep
-     * the whole thing to a few seconds.
-     */
-    private void scanLan(final String prefix, final boolean autoConnect) {
-        final Set<String> open = Collections.synchronizedSet(new LinkedHashSet<String>());
-        final AtomicInteger remaining = new AtomicInteger(254 * SCAN_PORTS.length);
-        final ExecutorService pool = Executors.newFixedThreadPool(48);
-
-        for (int i = 1; i <= 254; i++) {
-            final String host = prefix + i;
-            for (final int port : SCAN_PORTS) {
-                pool.execute(() -> {
-                    Socket sock = new Socket();
-                    try {
-                        sock.connect(new InetSocketAddress(host, port), 400);
-                        open.add("http://" + host + ":" + port);
-                    } catch (Exception ignored) {
-                        // host silent on this port
-                    } finally {
-                        try { sock.close(); } catch (Exception ignored) { }
-                        if (remaining.decrementAndGet() == 0) {
-                            pool.shutdown();
-                            classifyFound(open, autoConnect);
-                        }
-                    }
-                });
-            }
-        }
-    }
-
-    /** Second pass: work out which open ports are actually editors. */
-    private void classifyFound(final Set<String> open, final boolean autoConnect) {
-        mainHandler.post(() -> statusSubtitle.setText(getString(R.string.scan_probing, open.size())));
-
-        executor.execute(() -> {
-            final List<String> ides = new ArrayList<>();
-            final List<String> others = new ArrayList<>();
-            for (String url : new ArrayList<>(open)) {
-                int kind = probeServer(url, 1500);
-                if (kind == PROBE_IDE) ides.add(url);
-                else if (kind == PROBE_HTTP) others.add(url);
-            }
-            mainHandler.post(() -> finishScan(ides, others, autoConnect));
-        });
-    }
-
-    private void finishScan(List<String> ides, List<String> others, boolean autoConnect) {
-        if (btnScan != null) {
-            btnScan.setEnabled(true);
-            btnScan.setText(R.string.scan_wifi);
-        }
-
-        if (autoConnect && !ides.isEmpty()) {
-            autoConnectUsed = true;
-            String target = ides.get(0);
-            statusTitle.setText(R.string.scan_title);
-            statusSubtitle.setText(getString(R.string.scan_connecting, target));
-            Log.i(TAG, "Auto-discovered IDE at " + target + " — connecting");
-            currentServerUrl = target;
-            prefs.edit().putString(KEY_SERVER_URL, target).apply();
-            if (editServerUrl != null) editServerUrl.setText(target);
-            isServerReady = false;
-            pollServerReadiness();
-            return;
-        }
-
-        showManualEntry(pendingError);
-        if (recentsRow == null) return;
-        recentsRow.removeAllViews();
-        if (!ides.isEmpty()) {
-            addRowLabel(getString(R.string.scan_found, ides.size()));
-            for (String url : ides) addServerChoice(url);
-        }
-        if (!others.isEmpty()) {
-            addRowLabel(getString(R.string.scan_other));
-            for (String url : others) addServerChoice(url);
-        }
-        if (ides.isEmpty() && others.isEmpty()) {
-            statusSubtitle.setText(R.string.scan_none);
-        }
-        for (String url : recentServers()) {
-            if (!ides.contains(url) && !others.contains(url)) addServerChoice(url);
-        }
-    }
-
-    private void showManualEntry(String lastError) {
-        progressBar.setVisibility(View.GONE);
-        statusTitle.setText(R.string.server_not_found_title);
-        statusSubtitle.setText(getString(R.string.server_not_found_desc,
-                currentServerUrl, lastError == null ? "" : lastError));
-        serverConfigContainer.setVisibility(View.VISIBLE);
-        editServerUrl.setText(currentServerUrl);
-        renderRecents();
-    }
-
-    private void setupKeybar() {
-        String[][] keyDefs = {
-                {"ESC", "Escape"},
-                {"TAB", "Tab"},
-                {"CTRL", "Control"},
-                {"ALT", "Alt"},
-                {"{", "{"},
-                {"}", "}"},
-                {"(", "("},
-                {")", ")"},
-                {"[", "["},
-                {"]", "]"},
-                {";", ";"},
-                {":", ":"},
-                {"=", "="},
-                {"\"", "\""},
-                {"'", "'"},
-                {"/", "/"},
-                {"\\", "\\"},
-                {"|", "|"},
-                {"_", "_"},
-                {"\u2190", "ArrowLeft"},
-                {"\u2191", "ArrowUp"},
-                {"\u2193", "ArrowDown"},
-                {"\u2192", "ArrowRight"}
-        };
-
-        for (String[] def : keyDefs) {
-            final String label = def[0];
-            final String value = def[1];
-
-            Button btn = new Button(this);
-            btn.setText(label);
-            btn.setTextColor(Color.parseColor("#CCCCCC"));
-            btn.setTextSize(12f);
-            btn.setBackgroundColor(Color.parseColor("#333333"));
-            btn.setPadding(24, 0, 24, 0);
-            btn.setGravity(Gravity.CENTER);
-
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    dpToPx(36)
-            );
-            params.setMargins(dpToPx(3), 0, dpToPx(3), 0);
-            btn.setLayoutParams(params);
-
-            if (label.equals("CTRL")) {
-                ctrlButton = btn;
-            } else if (label.equals("ALT")) {
-                altButton = btn;
-            }
-
-            btn.setOnClickListener(v -> handleKeyPress(label, value));
-            keysContainer.addView(btn);
-        }
-    }
-
-    private int getKeyCodeForSpecial(String value) {
-        switch (value) {
-            case "Escape": return 27;
-            case "Tab": return 9;
-            case "ArrowLeft": return 37;
-            case "ArrowUp": return 38;
-            case "ArrowRight": return 39;
-            case "ArrowDown": return 40;
-            default: return 0;
-        }
-    }
-
-    private void handleKeyPress(String label, String value) {
-        if ("CTRL".equals(label)) {
-            isCtrlActive = !isCtrlActive;
-            if (ctrlButton != null) {
-                ctrlButton.setBackgroundColor(isCtrlActive ? Color.parseColor("#007ACC") : Color.parseColor("#333333"));
-            }
-            return;
-        }
-
-        if ("ALT".equals(label)) {
-            isAltActive = !isAltActive;
-            if (altButton != null) {
-                altButton.setBackgroundColor(isAltActive ? Color.parseColor("#007ACC") : Color.parseColor("#333333"));
-            }
-            return;
-        }
-
-        // Send to active element in WebView
-        boolean isPrintable = label.length() == 1 && !value.startsWith("Arrow") && !isCtrlActive && !isAltActive;
-        String js;
-
-        if (isPrintable) {
-            String escaped = value.replace("\\", "\\\\").replace("\"", "\\\"");
-            js = "(function() { " +
-                    "var target = document.activeElement; " +
-                    "if (!target || target === document.body) { " +
-                    "  target = document.querySelector('.monaco-editor.focused textarea.inputarea') || " +
-                    "           document.querySelector('.monaco-editor textarea.inputarea') || " +
-                    "           document.querySelector('.terminal.xterm textarea.xterm-helper-textarea') || " +
-                    "           document.querySelector('textarea, input:not([type=\"hidden\"])') || " +
-                    "           document.body; " +
-                    "} " +
-                    "if (target && typeof target.focus === 'function' && document.activeElement !== target) { " +
-                    "  try { target.focus(); } catch(e){} " +
-                    "} " +
-                    "if (typeof target.setRangeText === 'function') { " +
-                    "  var start = target.selectionStart, end = target.selectionEnd; " +
-                    "  target.setRangeText(\"" + escaped + "\", start, end, 'end'); " +
-                    "  target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: \"" + escaped + "\" })); " +
-                    "} else { " +
-                    "  document.execCommand('insertText', false, \"" + escaped + "\"); " +
-                    "} " +
-                    "})();";
-        } else {
-            int keyCode = getKeyCodeForSpecial(value);
-            js = "(function() { " +
-                    "var target = document.activeElement; " +
-                    "if (!target || target === document.body) { " +
-                    "  target = document.querySelector('.monaco-editor.focused textarea.inputarea') || " +
-                    "           document.querySelector('.monaco-editor textarea.inputarea') || " +
-                    "           document.querySelector('.terminal.xterm textarea.xterm-helper-textarea') || " +
-                    "           document.querySelector('textarea, input:not([type=\"hidden\"])') || " +
-                    "           document.body; " +
-                    "} " +
-                    "if (target && typeof target.focus === 'function' && document.activeElement !== target) { " +
-                    "  try { target.focus(); } catch(e){} " +
-                    "} " +
-                    "var opt = { key: '" + value + "', code: '" + value + "', keyCode: " + keyCode + ", which: " + keyCode + ", ctrlKey: " + isCtrlActive + ", altKey: " + isAltActive + ", bubbles: true, cancelable: true }; " +
-                    "var downEvt = new KeyboardEvent('keydown', opt); " +
-                    "try { Object.defineProperty(downEvt, 'keyCode', { get: function() { return " + keyCode + "; } }); Object.defineProperty(downEvt, 'which', { get: function() { return " + keyCode + "; } }); } catch(e){} " +
-                    "target.dispatchEvent(downEvt); " +
-                    "if ('" + value + "' === 'Tab' && typeof target.setRangeText === 'function') { " +
-                    "  var start = target.selectionStart, end = target.selectionEnd; " +
-                    "  target.setRangeText('    ', start, end, 'end'); " +
-                    "  target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '    ' })); " +
-                    "} else if ('" + value + "' === 'ArrowLeft' && typeof target.setSelectionRange === 'function') { " +
-                    "  var p = Math.max(0, target.selectionStart - 1); target.setSelectionRange(p, p); " +
-                    "} else if ('" + value + "' === 'ArrowRight' && typeof target.setSelectionRange === 'function') { " +
-                    "  var p = Math.min((target.value ? target.value.length : 0), target.selectionEnd + 1); target.setSelectionRange(p, p); " +
-                    "} " +
-                    "var upEvt = new KeyboardEvent('keyup', opt); " +
-                    "try { Object.defineProperty(upEvt, 'keyCode', { get: function() { return " + keyCode + "; } }); Object.defineProperty(upEvt, 'which', { get: function() { return " + keyCode + "; } }); } catch(e){} " +
-                    "target.dispatchEvent(upEvt); " +
-                    "})();";
-        }
-
-        webView.evaluateJavascript(js, null);
-
-        // Reset modifiers after regular keypress
-        if (isCtrlActive) {
-            isCtrlActive = false;
-            if (ctrlButton != null) ctrlButton.setBackgroundColor(Color.parseColor("#333333"));
-        }
-        if (isAltActive) {
-            isAltActive = false;
-            if (altButton != null) altButton.setBackgroundColor(Color.parseColor("#333333"));
-        }
-    }
-
-    private int dpToPx(int dp) {
-        return Math.round(dp * getResources().getDisplayMetrics().density);
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            // Minimize rather than killing background server
-            moveTaskToBack(true);
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
+        foreground = false; generation++; handler.removeCallbacksAndMessages(null); network.shutdownNow();
+        if (fileCallback != null) fileCallback.onReceiveValue(null);
+        if (webView != null) { ((ViewGroup) webView.getParent()).removeView(webView); webView.destroy(); }
         super.onDestroy();
-        executor.shutdownNow();
-        if (isServiceStarted) {
-            stopService(new Intent(this, VScodeService.class));
-            isServiceStarted = false;
+    }
+
+    private void render(boolean force) {
+        if (prefs == null || editorVisible || loadingPage || connectionError) return;
+        TermuxBridge.State task = TermuxBridge.readState(this);
+        String next;
+        if (!prefs.getBoolean("setup_started", false)) next = "welcome";
+        else if (!TermuxBridge.isInstalled(this)) next = "termux";
+        else if (!prefs.getBoolean("bridge_configured", false) || !TermuxBridge.hasRunPermission(this)) next = "link";
+        else if (task.running) next = "installing";
+        else if (localReady) next = "ready";
+        else if (!task.success && !task.action.isEmpty()) next = "error";
+        else next = "install";
+        setup.setVisibility(View.VISIBLE); editor.setVisibility(View.GONE);
+        if (!force && next.equals(screen)) { updateProgress(task); return; }
+        screen = next; detail.removeAllViews(); secondary.setVisibility(View.GONE);
+        primary.setEnabled(true); remote.setEnabled(!task.running);
+        progress.setVisibility(View.GONE); caption.setVisibility(View.GONE);
+        footnote.setText("One-time setup · No root needed");
+        int current = next.equals("welcome") || next.equals("termux") ? 0 : next.equals("link") ? 1 : next.equals("ready") ? 3 : 2;
+        buildSteps(current);
+        switch (next) {
+            case "welcome":
+                title.setText("Let’s get you\ncoding.");
+                subtitle.setText("VS Code, a terminal, Python and C++ on your Android. We’ll walk you through the setup.");
+                note("Runs locally with Termux. Allow about 1 GB of free space and 10–30 minutes for the first download.");
+                action("Get started", () -> { prefs.edit().putBoolean("setup_started", true).putString("mode", "local").apply(); render(true); });
+                break;
+            case "termux":
+                title.setText("First, get Termux.");
+                subtitle.setText("Termux runs your development tools on this phone. Install it, open it once, then come back here.");
+                note("Use the F-Droid build for this setup. Android may ask you to allow installation from your browser.");
+                action("Download Termux", () -> openUrl("https://f-droid.org/en/packages/com.termux/"));
+                secondary("I’ve installed Termux", () -> {
+                    notice = TermuxBridge.isInstalled(this) ? "" : "Termux is not installed yet. Finish installing it, then open it once.";
+                    render(true);
+                });
+                break;
+            case "link":
+                title.setText("Connect the two apps.");
+                subtitle.setText("One small step in Termux lets OpenVScode install and start your editor for you.");
+                note("1. Copy the command below.\n2. Open Termux, paste it, and press Enter.\n3. Return here and allow access.");
+                TextView command = note(TermuxBridge.enableExternalAppsCommand());
+                command.setTypeface(Typeface.MONOSPACE); command.setTextSize(11); command.setTextIsSelectable(true);
+                action("Copy command & open Termux", () -> {
+                    copy("Termux setup", TermuxBridge.enableExternalAppsCommand());
+                    if (!TermuxBridge.openTermux(this)) toast("Open Termux from your app drawer.");
+                });
+                secondary("I’ve run it · Allow access", () -> {
+                    prefs.edit().putBoolean("bridge_configured", true).apply(); notice = "";
+                    if (!TermuxBridge.hasRunPermission(this)) permission.launch(TermuxBridge.RUN_PERMISSION);
+                    else render(true);
+                });
+                if (!notice.isEmpty()) smallButton("Open Android app permissions", () -> openAppSettings(getPackageName()));
+                break;
+            case "install":
+                title.setText(prefs.getBoolean("core_installed", false) ? "Welcome back." : "Make room for ideas.");
+                subtitle.setText(prefs.getBoolean("core_installed", false)
+                    ? "Start your local editor and pick up where you left off. Your projects stay in Termux."
+                    : "We’ll install the editor, Python and a C++ compiler. Your projects live on your phone.");
+                if (!prefs.getBoolean("core_installed", false)) {
+                    CheckBox check = new CheckBox(this); check.setText("Also install Jupyter notebooks (takes longer)");
+                    check.setTextColor(TEXT); check.setTextSize(14); check.setChecked(notebooks);
+                    check.setOnCheckedChangeListener((v, checked) -> notebooks = checked); detail.addView(check);
+                    note("Keep Termux running during setup. If a download stops, retrying keeps completed work and your files.");
+                }
+                action(prefs.getBoolean("core_installed", false) ? "Start editor" : "Install my workspace",
+                    () -> runRuntime(!prefs.getBoolean("core_installed", false)));
+                break;
+            case "installing":
+                title.setText(task.action.equals("start") ? "Waking your workspace." : "Your workspace is\ntaking shape.");
+                subtitle.setText("Termux is doing the work. You can leave this screen and return to check progress.");
+                action("Open Termux", () -> TermuxBridge.openTermux(this));
+                secondary("View installation log", this::showLogs);
+                smallButton("Installation seems stuck", this::showRecovery);
+                footnote.setText("Keep Termux open · Wi-Fi recommended");
+                break;
+            case "ready":
+                title.setText("You’re ready to code.");
+                subtitle.setText("Your local editor is responding. Open your workspace and make something.");
+                note("Your files: ~/OpenVScode_Workspace\nUse the editor’s Terminal menu to run Python, compile C++, or install more tools.");
+                action("Open editor", () -> connect(DEFAULT_SERVER_URL));
+                secondary("View setup details", this::showLogs);
+                footnote.setText("Local workspace · Available offline after setup");
+                break;
+            default:
+                title.setText("Let’s get this unstuck.");
+                subtitle.setText(task.message.isEmpty() ? "The editor could not start. Your projects and completed downloads are safe." : task.message);
+                note("Check the log for the failed step. Keep Termux open and your internet connected, then retry.");
+                action("Retry setup", () -> runRuntime(!prefs.getBoolean("core_installed", false)));
+                secondary("View installation log", this::showLogs);
+                smallButton("Reconnect Termux", () -> { prefs.edit().putBoolean("bridge_configured", false).apply(); notice = ""; render(true); });
+        }
+        if (!notice.isEmpty()) note(notice);
+        updateProgress(task);
+    }
+
+    private void updateProgress(TermuxBridge.State task) {
+        if (!screen.equals("installing")) return;
+        progress.setVisibility(View.VISIBLE); caption.setVisibility(View.VISIBLE);
+        long elapsed = Math.max(0, (System.currentTimeMillis() - task.startedAt) / 1000);
+        String message = "Waiting for Termux to start. The first package download may take a few minutes.";
+        boolean current = runtimeStatus != null && task.requestId.equals(runtimeStatus.optString("requestId"));
+        progress.setIndeterminate(!current);
+        if (current) {
+            progress.setProgress(Math.max(0, Math.min(100, runtimeStatus.optInt("progress"))));
+            message = runtimeStatus.optString("message", message);
+        }
+        caption.setText(message + "\n" + elapsed / 60 + "m " + elapsed % 60 + "s elapsed");
+    }
+    private void runRuntime(boolean install) {
+        if (TermuxBridge.readState(this).running) { render(true); return; }
+        generation++; localReady = false; runtimeStatus = null; notice = "";
+        prefs.edit().putString("mode", "local").putBoolean("setup_started", true).apply();
+        if (install) TermuxBridge.install(this, notebooks); else TermuxBridge.start(this);
+        render(true); checkRuntime();
+    }
+    private void checkRuntime() {
+        if (checking || !prefs.getBoolean("setup_started", false) || editorVisible || loadingPage || connectionError) return;
+        checking = true; int checkGeneration = generation;
+        TermuxBridge.State before = TermuxBridge.readState(this);
+        String token = TermuxBridge.statusToken(this);
+        network.execute(() -> {
+            JSONObject status = null; boolean ready = false;
+            try { status = new JSONObject(fetch(TermuxBridge.STATUS_URL, token, 1800)); } catch (Exception ignored) {}
+            boolean current = status != null && before.requestId.equals(status.optString("requestId"));
+            // An unrelated HTTP 200 or a booting HTTP 503 must never mean ready.
+            if (!before.running || (current && "ready".equals(status.optString("state")))) {
+                try {
+                    JSONObject health = new JSONObject(fetch(DEFAULT_SERVER_URL + "/healthz", null, 1600));
+                    ready = ("alive".equals(health.optString("status")) || "expired".equals(health.optString("status")))
+                        && health.has("lastHeartbeat");
+                } catch (Exception ignored) {}
+            }
+            JSONObject result = status; boolean healthy = ready;
+            handler.post(() -> {
+                checking = false;
+                if (isDestroyed() || checkGeneration != generation) return;
+                runtimeStatus = result;
+                if (result != null) {
+                    JSONArray lines = result.optJSONArray("logTail");
+                    if (lines != null) { StringBuilder b = new StringBuilder(); for (int i=0; i<lines.length(); i++) b.append(lines.optString(i)).append('\n'); logs = b.toString(); }
+                }
+                localReady = healthy;
+                if (healthy && TermuxBridge.recordReady(this, before.requestId)) prefs.edit().putBoolean("core_installed", true).apply();
+                if (result != null && before.requestId.equals(result.optString("requestId")) && "error".equals(result.optString("state")))
+                    TermuxBridge.recordFailure(this, before.requestId, result.optString("message"), logs);
+                render(false);
+            });
+        });
+    }
+    private static String fetch(String address, String token, int timeout) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(address).openConnection();
+        try {
+            conn.setConnectTimeout(timeout); conn.setReadTimeout(timeout); conn.setInstanceFollowRedirects(false);
+            if (token != null) conn.setRequestProperty("Authorization", "Bearer " + token);
+            int code = conn.getResponseCode(); if (code != 200) throw new IOException("HTTP " + code);
+            try (InputStream in = conn.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[4096]; int n;
+                while ((n = in.read(buf)) != -1) { if (out.size() + n > 65536) throw new IOException("Response too large"); out.write(buf, 0, n); }
+                return out.toString("UTF-8");
+            }
+        } finally { conn.disconnect(); }
+    }
+    private void buildSteps(int current) {
+        steps.removeAllViews();
+        String[] labels = {"Install Termux", "Connect your apps", "Set up your workspace", "Open the editor"};
+        for (int i=0; i<labels.length; i++) {
+            LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(0,dp(9),0,dp(9));
+            TextView num = new TextView(this); num.setText(i < current ? "✓" : String.valueOf(i+1));
+            num.setTextColor(i <= current ? BLUE : TEXT); num.setTypeface(null,Typeface.BOLD); num.setTextSize(14);
+            row.addView(num,new LinearLayout.LayoutParams(dp(32),ViewGroup.LayoutParams.WRAP_CONTENT));
+            TextView label = new TextView(this); label.setText(labels[i]); label.setTextSize(14);
+            label.setTextColor(i == current ? Color.WHITE : TEXT); label.setTypeface(null,i == current ? Typeface.BOLD : Typeface.NORMAL);
+            row.addView(label); steps.addView(row);
         }
     }
+    private TextView note(String text) {
+        TextView v = new TextView(this); v.setText(text); v.setTextColor(TEXT); v.setTextSize(14); v.setLineSpacing(dp(3),1);
+        v.setPadding(0,0,0,dp(10)); detail.addView(v); return v;
+    }
+    private void action(String text, Runnable run) { primary.setText(text); primary.setOnClickListener(v -> run.run()); }
+    private void secondary(String text, Runnable run) { secondary.setVisibility(View.VISIBLE); secondary.setText(text); secondary.setOnClickListener(v -> run.run()); }
+    private void smallButton(String label, Runnable run) {
+        Button b = new Button(this,null,com.google.android.material.R.attr.borderlessButtonStyle);
+        b.setText(label); b.setAllCaps(false); b.setTextColor(BLUE); b.setMinHeight(dp(48));
+        b.setOnClickListener(v -> run.run()); detail.addView(b);
+    }
+    private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
+    private void toast(String text) { Toast.makeText(this,text,Toast.LENGTH_LONG).show(); }
+    private void copy(String label, String text) {
+        ((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText(label,text));
+        toast("Copied. Paste in Termux and press Enter.");
+    }
+    private void openUrl(String url) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url))); }
+        catch (Exception e) { toast("No app can open this link."); }
+    }
+    private void openAppSettings(String pkg) { openIntent(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:" + pkg))); }
+    private void openIntent(Intent intent) { try { startActivity(intent); } catch (Exception e) { toast("This setting is unavailable on this device."); } }
+    private void showHelp() {
+        new AlertDialog.Builder(this).setTitle("A little help")
+            .setItems(new String[]{"Installation log", "Termux battery settings", "OpenVScode permissions", "How setup works"}, (d,which) -> {
+                if (which == 0) showLogs();
+                else if (which == 1) openAppSettings("com.termux");
+                else if (which == 2) openAppSettings(getPackageName());
+                else new AlertDialog.Builder(this).setTitle("Your workspace, on your phone")
+                    .setMessage("Termux runs code-server, Python and C++. OpenVScode displays the editor.\n\nKeep Termux running. If Android stops it, use Start editor to reconnect. Setting Termux battery use to Unrestricted can help.\n\nProjects: ~/OpenVScode_Workspace\nLogs: ~/.local/state/openvscode\n\nTermux’s external-app setting allows apps you grant its Run command permission to run shell commands. Grant this only to apps you trust.")
+                    .setPositiveButton("Got it",null).show();
+            }).setNegativeButton("Close",null).show();
+    }
+    private void showLogs() {
+        TermuxBridge.State task = TermuxBridge.readState(this);
+        String diagnostic = "OpenVScode " + BuildConfig.VERSION_NAME + " · Android " + Build.VERSION.RELEASE
+            + "\nTermux installed: " + TermuxBridge.isInstalled(this) + "\nCommand permission: " + TermuxBridge.hasRunPermission(this)
+            + "\n" + task.message + "\n\n" + (logs.isEmpty() ? task.output : logs);
+        if (logs.isEmpty() && task.output.isEmpty()) diagnostic += "\nWaiting for log output. You can also view ~/.local/state/openvscode/install.log in Termux.";
+        final String report = diagnostic.replace(TermuxBridge.statusToken(this),"[redacted]");
+        TextView text = new TextView(this); text.setText(report); text.setTextIsSelectable(true); text.setTypeface(Typeface.MONOSPACE);
+        text.setTextSize(12); text.setPadding(dp(20),dp(12),dp(20),dp(12));
+        ScrollView scroll = new ScrollView(this); scroll.addView(text);
+        new AlertDialog.Builder(this).setTitle("Setup diagnostics").setView(scroll)
+            .setPositiveButton("Close",null).setNeutralButton("Copy log",(d,w) -> {
+                ((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("OpenVScode diagnostics",report)); toast("Diagnostics copied.");
+            }).show();
+    }
+    private void showRecovery() {
+        new AlertDialog.Builder(this).setTitle("Check Termux first")
+            .setMessage("A package download can take several minutes. Open Termux to check for a package or permission prompt.\n\nIf Termux stopped, retry setup. Completed packages and your projects are kept. A lock prevents two installers from changing packages at the same time.")
+            .setPositiveButton("Open Termux",(d,w) -> TermuxBridge.openTermux(this))
+            .setNeutralButton("Retry setup",(d,w) -> { TermuxBridge.clearPending(this); runRuntime(!prefs.getBoolean("core_installed",false)); })
+            .setNegativeButton("Keep waiting",null).show();
+    }
+    private void showRemoteDialog() {
+        EditText input = new EditText(this); input.setSingleLine(true); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        input.setHint("https://your-server.example"); input.setText(prefs.getString("server_url",""));
+        LinearLayout box = new LinearLayout(this); box.setPadding(dp(24),dp(8),dp(24),0); box.addView(input,new LinearLayout.LayoutParams(-1,-2));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Connect to a server")
+            .setMessage("Enter your code-server or VS Code server address. Use HTTPS for a server outside this phone.")
+            .setView(box).setNegativeButton("Cancel",null).setPositiveButton("Connect",null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            List<String> choices = candidateUrls(input.getText().toString());
+            if (choices.isEmpty()) { input.setError("Enter a valid HTTP or HTTPS address."); return; }
+            String url = choices.get(0); prefs.edit().putString("server_url",url).putString("mode","remote").apply();
+            dialog.dismiss(); connect(url);
+        })); dialog.show();
+    }
+
+    @SuppressLint("SetJavaScriptEnabled") private void createWebView() {
+        FrameLayout container = findViewById(R.id.webContainer);
+        webView = new WebView(this); container.addView(webView,new FrameLayout.LayoutParams(-1,-1));
+        webView.setBackgroundColor(Color.rgb(30,30,30));
+        WebSettings s = webView.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(false); s.setAllowContentAccess(true); s.setUseWideViewPort(true); s.setLoadWithOverviewMode(true);
+        s.setSupportZoom(false); s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
+                if (fileCallback != null) fileCallback.onReceiveValue(null); fileCallback = cb;
+                try { files.launch(params.createIntent()); } catch (Exception e) { fileCallback.onReceiveValue(null); fileCallback=null; toast("No file picker is available."); }
+                return true;
+            }
+        });
+        webView.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String scheme = request.getUrl().getScheme();
+                if ("https".equals(scheme) || "http".equals(scheme)) {
+                    if (request.isForMainFrame() && request.hasGesture() && !isMatchingServer(request.getUrl().toString(),serverUrl)) {
+                        openUrl(request.getUrl().toString()); return true;
+                    }
+                    return false;
+                }
+                if (request.hasGesture() && ("mailto".equals(scheme) || "tel".equals(scheme))) openUrl(request.getUrl().toString());
+                return true;
+            }
+            @Override public void onPageFinished(WebView view, String url) {
+                if (pageFailed || !loadingPage || "about:blank".equals(url)) return;
+                loadingPage = false; editorVisible = true; setup.setVisibility(View.GONE); editor.setVisibility(View.VISIBLE);
+                ((TextView)findViewById(R.id.editorLabel)).setText(isMatchingServer(serverUrl,DEFAULT_SERVER_URL) ? "OpenVScode · Local" : "OpenVScode · Connected");
+                if (foreground) {
+                    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(MainActivity.this,Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        && !prefs.getBoolean("notifications_asked",false)) {
+                        prefs.edit().putBoolean("notifications_asked",true).apply(); notifications.launch(Manifest.permission.POST_NOTIFICATIONS);
+                    }
+                    try { ContextCompat.startForegroundService(MainActivity.this,new Intent(MainActivity.this,VScodeService.class)); }
+                    catch (RuntimeException ignored) { /* Editor remains usable if Android declines session support. */ }
+                }
+            }
+            @Override public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError error) {
+                if (req.isForMainFrame()) connectionFailed("The editor is unreachable. Start it again in Termux, or check your server address.");
+            }
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest req, WebResourceResponse response) {
+                if (req.isForMainFrame() && response.getStatusCode() >= 400 && response.getStatusCode() != 401)
+                    connectionFailed("The server returned HTTP " + response.getStatusCode() + ". Check the server, then reconnect.");
+            }
+            @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                container.removeView(view); view.destroy(); webView = null; createWebView();
+                connectionFailed("Android closed the editor view to free memory. Reopen it to continue."); return true;
+            }
+        });
+        webView.setDownloadListener((url,agent,disposition,type,length) -> {
+            if (url.startsWith("http://") || url.startsWith("https://")) openUrl(url);
+            else toast("Use the editor terminal to save this file to your workspace.");
+        });
+    }
+    private void connect(String url) {
+        generation++; serverUrl = url; pageFailed = false; connectionError = false; loadingPage = true; editorVisible = false;
+        editor.setVisibility(View.VISIBLE); setup.setVisibility(View.VISIBLE);
+        title.setText("Opening your editor."); subtitle.setText("Connecting to your workspace…");
+        steps.removeAllViews(); detail.removeAllViews(); progress.setVisibility(View.VISIBLE); progress.setIndeterminate(true);
+        caption.setVisibility(View.GONE); secondary.setVisibility(View.GONE);
+        action("Back to setup", () -> { webView.stopLoading(); loadingPage=false; editorVisible=false; render(true); });
+        webView.loadUrl(url);
+        int loadGeneration = generation;
+        handler.postDelayed(() -> { if (loadingPage && generation == loadGeneration) connectionFailed("The editor is taking too long to open. Check that Termux or your server is still running."); },30000);
+    }
+    private void connectionFailed(String message) {
+        pageFailed = true; loadingPage = false; editorVisible = false; connectionError = true;
+        setup.setVisibility(View.VISIBLE); editor.setVisibility(View.GONE); screen="connection_error";
+        title.setText("Connection interrupted."); subtitle.setText(message); detail.removeAllViews(); steps.removeAllViews();
+        progress.setVisibility(View.GONE); caption.setVisibility(View.GONE);
+        action("Reconnect", () -> connect(serverUrl));
+        secondary("Back to setup", () -> { prefs.edit().putString("mode","local").apply(); localReady=false; notice=""; connectionError=false; render(true); });
+    }
+    private void showSession() {
+        new AlertDialog.Builder(this).setTitle("Your session")
+            .setItems(new String[]{"Reload editor", "Show / hide coding keys", "Open Termux", "Workspace setup", "Release background wake lock"},(d,which) -> {
+                if (which==0) connect(serverUrl);
+                else if (which==1) { View bar=findViewById(R.id.keyboardToolbar); bar.setVisibility(bar.getVisibility()==View.VISIBLE ? View.GONE : View.VISIBLE); }
+                else if (which==2) TermuxBridge.openTermux(this);
+                else if (which==3) { editorVisible=false; prefs.edit().putString("mode","local").apply(); render(true); }
+                else { stopService(new Intent(this,VScodeService.class)); toast("Wake lock released. Termux manages the running server."); }
+            }).setNegativeButton("Close",null).show();
+    }
+    private void buildKeybar() {
+        String[] labels={"Esc","Tab","Ctrl","Alt","{","}","(",")","[","]","/",";","←","↓","↑","→"};
+        for (String key:labels) {
+            Button b=new Button(this); b.setText(key); b.setAllCaps(false); b.setTextSize(12); b.setTextColor(TEXT);
+            b.setMinWidth(dp(48)); b.setMinimumWidth(dp(48)); b.setPadding(dp(8),0,dp(8),0); b.setFocusable(false);
+            keys.addView(b,new LinearLayout.LayoutParams(-2,dp(48)));
+            b.setOnClickListener(v -> {
+                if (key.equals("Ctrl")) { ctrl=!ctrl; b.setTextColor(ctrl ? BLUE:TEXT); return; }
+                if (key.equals("Alt")) { alt=!alt; b.setTextColor(alt ? BLUE:TEXT); return; }
+                sendKey(key);
+                ctrl=false; alt=false; for(int i=0;i<keys.getChildCount();i++) ((Button)keys.getChildAt(i)).setTextColor(TEXT);
+            });
+        }
+    }
+    private void sendKey(String key) {
+        webView.requestFocus();
+        int code=0;
+        switch(key) { case "Esc": code=KeyEvent.KEYCODE_ESCAPE; break; case "Tab": code=KeyEvent.KEYCODE_TAB; break;
+            case "←": code=KeyEvent.KEYCODE_DPAD_LEFT; break; case "→": code=KeyEvent.KEYCODE_DPAD_RIGHT; break;
+            case "↑": code=KeyEvent.KEYCODE_DPAD_UP; break; case "↓": code=KeyEvent.KEYCODE_DPAD_DOWN; break; }
+        if(code!=0) {
+            int meta=(ctrl?KeyEvent.META_CTRL_ON:0)|(alt?KeyEvent.META_ALT_ON:0);
+            long time=android.os.SystemClock.uptimeMillis();
+            webView.dispatchKeyEvent(new KeyEvent(time,time,KeyEvent.ACTION_DOWN,code,0,meta));
+            webView.dispatchKeyEvent(new KeyEvent(time,time,KeyEvent.ACTION_UP,code,0,meta));
+        } else {
+            // Use WebView's IME connection so Monaco receives real text input.
+            android.view.inputmethod.InputConnection input=webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo());
+            if(input!=null) input.commitText(key,1);
+        }
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if(editorVisible && (ctrl || alt) && event.getKeyCode()!=KeyEvent.KEYCODE_BACK) {
+            KeyEvent modified=new KeyEvent(event.getDownTime(),event.getEventTime(),event.getAction(),event.getKeyCode(),event.getRepeatCount(),
+                event.getMetaState()|(ctrl?KeyEvent.META_CTRL_ON:0)|(alt?KeyEvent.META_ALT_ON:0));
+            boolean handled=webView.dispatchKeyEvent(modified);
+            if(event.getAction()==KeyEvent.ACTION_UP) { ctrl=false;alt=false;for(int i=0;i<keys.getChildCount();i++) ((Button)keys.getChildAt(i)).setTextColor(TEXT); }
+            return handled;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+    @Override public void onBackPressed() {
+        if (loadingPage) { webView.stopLoading(); loadingPage=false; render(true); }
+        else if(editorVisible) showSession(); else moveTaskToBack(true);
+    }
+    static List<String> candidateUrls(String raw) { return ServerAddress.candidates(raw); }
+    static String hostOf(String raw) { return ServerAddress.hostOf(raw); }
+    static boolean isLocalAddress(String host) { return ServerAddress.isLocal(host); }
+    static boolean isMatchingServer(String page, String server) { return ServerAddress.sameOrigin(page,server); }
+    static String subnetPrefixOf(String ip) { if(ip==null)return null;int dot=ip.lastIndexOf('.');return dot>0?ip.substring(0,dot+1):null; }
 }
