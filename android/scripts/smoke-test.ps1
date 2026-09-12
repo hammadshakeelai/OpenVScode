@@ -19,9 +19,23 @@ $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 
 function Invoke-Adb {
     param([string[]]$Arguments)
-    $result = & $Adb -s $Serial @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "adb $Arguments failed: $result" }
-    return ($result -join "`n")
+    # Windows PowerShell wraps a native command's stderr in ErrorRecords the moment
+    # it is redirected anywhere, and adb writes ordinary progress there, so
+    # "1 file pulled" aborts a passing run under this script's Stop preference.
+    # Relax it for this call only (the assignment is function-scoped), keep the
+    # streams apart, and judge the call by its exit code, which reports failure.
+    $ErrorActionPreference = 'Continue'
+    $errorFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $result = & $Adb -s $Serial @Arguments 2>$errorFile
+        if ($LASTEXITCODE -ne 0) {
+            $details = (Get-Content -LiteralPath $errorFile -Raw)
+            throw "adb $Arguments failed: $result`n$details"
+        }
+        return ($result -join "`n")
+    } finally {
+        Remove-Item -LiteralPath $errorFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Save-DeviceState {
