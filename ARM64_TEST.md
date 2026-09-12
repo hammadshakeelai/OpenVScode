@@ -1,4 +1,11 @@
-# One test only you can run
+# One test only you can run — and it has been run
+
+> [!NOTE]
+> **This is a record, not an instruction.** The test below was run on a Galaxy S23
+> Ultra and it settled the question the wrong way: an app cannot launch a glibc
+> binary on arm64 either. The no-Termux path was abandoned and its code removed,
+> and the app now installs and drives Termux instead. The commands here refer to
+> files that no longer ship; the measurements are kept because they explain why.
 
 Everything in the no-Termux path works except one step, and the emulator cannot
 tell us whether that step works on a real phone. This is the test that settles

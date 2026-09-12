@@ -158,22 +158,20 @@ cd ~/OpenVScode && ./start.sh
 - **1-Click Execution**: Dedicated Run button for Python scripts.
 
 ### 2. ⚡ C / C++ Environment
-- **Modern C++20 compiler**: `g++`, `gcc`, `make`, `cmake`.
-- **Why GCC and not Clang:** in the downloadable IDE image, Clang costs about
-  198 MB — `libLLVM` alone is 98 MB — out of a 1.2 GB filesystem, and `g++`
-  compiles the same C++20 for a small fraction of that. On a phone, where the
-  image has to be downloaded before anything works, that trade is worth making.
-  The Termux path still installs Clang, since there the toolchain is fetched
-  on-device rather than shipped.
-- **Verified in CI**: every published image compiles a real C++20 program before
-  it is allowed to ship.
+- **Clang, `make`, `cmake` and `pkg-config`** from Termux's own packages, so
+  `clang++` compiles C++20 out of the box.
+- **Checked on your phone, not just in CI**: setup compiles and runs a real C++
+  program before it reports success, so a broken toolchain fails at install time
+  with a message rather than on your first build.
 
-### 3. 📓 Jupyter Notebooks (Dual-Kernel: Python & C++)
-- **Native Notebook UI**: Interactive cells directly inside VS Code (`ms-toolsai.jupyter`).
-- **Python Kernel**: Standard `ipykernel`.
-- **C++ kernel (`jupyter-cpp-kernel`)**: installed via `pip`; compiles and runs
-  C++ cells on the fly. The published image registers kernels for C++98 through
-  C++23.
+### 3. 📓 Jupyter Notebooks (optional)
+- **Native Notebook UI**: interactive cells inside VS Code (`ms-toolsai.jupyter`).
+- **Python kernel**: `ipykernel`, registered for your user. Tick *Also install
+  Jupyter notebooks* during setup — it is opt-in because it lengthens the download,
+  and it cannot turn a working editor into a failed installation.
+- **C++ notebook cells are not set up for you.** The editor, Python and C++ come
+  first; [docs/JUPYTER_CPP_EXPLAINED.md](docs/JUPYTER_CPP_EXPLAINED.md) explains the
+  options if you want a C++ kernel as well.
 
 ### 4. 📱 Mobile-First Ergonomics
 - **No Wasted Screen Space**: Minimap and glyph margins disabled; word-wrap enabled.
