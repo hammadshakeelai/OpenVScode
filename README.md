@@ -163,6 +163,10 @@ cd ~/OpenVScode && ./start.sh
 - **Checked on your phone, not just in CI**: setup compiles and runs a real C++
   program before it reports success, so a broken toolchain fails at install time
   with a message rather than on your first build.
+- **Editor completion depends on your code-server build.** The clangd extension
+  is installed when that build can host it; some builds answer that it is not
+  available for their platform, and setup then says so plainly instead of advising
+  a retry that cannot work. Compiling and running are unaffected either way.
 
 ### 3. 📓 Jupyter Notebooks (optional)
 - **Native Notebook UI**: interactive cells inside VS Code (`ms-toolsai.jupyter`).

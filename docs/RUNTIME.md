@@ -112,9 +112,17 @@ The app's bridge captures its own bounded command transcript separately.
 - Python must import its core SSL/SQLite modules, and a small C++ program must
   compile and execute before core setup is accepted.
 - Extension downloads have time limits and may fail without blocking the editor.
-  Notebook dependencies are opt-in and similarly cannot turn a working core
-  environment into a failed installation. Termux's package-managed pip is never
-  upgraded with pip itself.
+  A failed download is retried once. An extension the running code-server cannot
+  host at all — it answers "not available in code-server for the Web platform" —
+  is reported as exactly that and never retried, because no retry can succeed,
+  and it does not mark setup as partially failed. Notebook dependencies are
+  opt-in and similarly cannot turn a working core environment into a failed
+  installation. Termux's package-managed pip is never upgraded with pip itself.
+- `ipykernel` depends on `psutil`, whose build script rejects Android outright
+  ("platform android is not supported"), so pip can never compile it on a phone.
+  Termux's packaged `python-psutil` is installed first, leaving pip nothing to
+  build. Notebook setup then counts the registered kernels and fails at zero: a
+  kernelspec listing exits zero even when it lists nothing.
 - Existing user settings, keybindings, code-server configuration and example
   projects are retained. Mobile defaults and examples are copied only if absent.
   An existing `settings.json` additionally receives only the default keys it does
