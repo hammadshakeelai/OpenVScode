@@ -89,6 +89,11 @@ final class TermuxCommandBuilder {
                 + "printf 'arch %s\\n' \"$(uname -m)\"\n"
                 + "printf 'free-kb %s\\n' \"$(df -Pk \"$HOME\" 2>/dev/null | awk 'NR == 2 { print $4 }')\"\n"
                 + "command -v code-server >/dev/null 2>&1 && printf 'editor installed\\n'\n"
+                // Diagnostics can then name what Termux actually has, instead of the
+                // app guessing from a setting like clangd.path.
+                + "for tool in python clang++ clangd code-server jupyter; do\n"
+                + "  command -v \"$tool\" >/dev/null 2>&1 && printf 'tool %s\\n' \"$tool\"\n"
+                + "done\n"
                 + "printf '%s\\n' '" + PROBE_MARKER + "'\n";
     }
 

@@ -60,6 +60,8 @@ public class TermuxCommandBuilderTest {
         String probe = TermuxCommandBuilder.buildProbe(requestId);
         assertTrue(probe.contains(TermuxCommandBuilder.PROBE_MARKER));
         assertFalse("A link check must not carry the installer with it", probe.contains("base64 -d"));
+        assertTrue("The check should report which tools Termux already has",
+                probe.contains("printf 'tool %s\\n'"));
         assertThrows(IllegalArgumentException.class, () -> TermuxCommandBuilder.buildProbe("'; id; #"));
     }
 

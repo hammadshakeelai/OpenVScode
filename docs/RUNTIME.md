@@ -36,6 +36,16 @@ commands it declined to run. The check stages no files and answers in about a
 second, so a missing permission or an unset `allow-external-apps` surfaces before
 the user waits through a package installation.
 
+The check also prints `tool <name>` for `python`, `clang++`, `clangd`, `code-server`
+and `jupyter` when each is present, so diagnostics can state what Termux actually
+has instead of inferring it from a setting. It is reachable at any time from
+**Help & diagnostics → Check the Termux link**, not only during first setup.
+
+`ov_lock` exits 75 when another OpenVScode operation already holds the installer
+lock. That is a healthy run in progress, not a failure: the app adopts the running
+operation's `requestId` from the status endpoint and follows its progress, rather
+than reporting the installation the user is watching as broken.
+
 The bridge needs a Termux build that ships `com.termux.app.RunCommandService` and
 declares `com.termux.permission.RUN_COMMAND` — the F-Droid or GitHub build. The
 Google Play build has neither, and the app detects this before requesting a
@@ -107,6 +117,11 @@ The app's bridge captures its own bounded command transcript separately.
   upgraded with pip itself.
 - Existing user settings, keybindings, code-server configuration and example
   projects are retained. Mobile defaults and examples are copied only if absent.
+  An existing `settings.json` additionally receives only the default keys it does
+  not already set, backed up once as `settings.json.openvscode.bak`; a value the
+  user chose is never replaced, and a file that is not plain JSON is left alone.
+  Otherwise a default added in a later version (workspace trust, for instance)
+  would never reach anyone who had already installed.
   The app launches with its own config at `~/.config/openvscode/code-server.yaml`.
 - The editor listens on `127.0.0.1:8080` with authentication disabled, matching the
   companion's local connection. It is not exposed on Wi-Fi, although other apps on

@@ -4,6 +4,13 @@
   "workbench.startupEditor": "none",
   "workbench.layoutControl.enabled": true,
 
+  "// The installer creates this workspace on the user's own phone, and Restricted": "",
+  "// Mode would disable the Python and C++ extensions it just installed.": "",
+  "security.workspace.trust.enabled": false,
+
+  "// The chat side bar covers half of a phone screen. Reachable, just not open.": "",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+
   "// Mobile Screen Real-Estate Optimizations": "",
   "editor.minimap.enabled": false,
   "editor.glyphMargin": false,

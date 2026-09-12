@@ -36,6 +36,8 @@ public final class TermuxBridge {
     private static final String PREFIX = "com.termux.RUN_COMMAND_";
     private static final String RUN_COMMAND_SERVICE = "com.termux.app.RunCommandService";
     static final String PROBE_ACTION = "probe";
+    /** ov_lock exits 75 when another OpenVScode operation already holds the lock. */
+    private static final int LOCK_BUSY_EXIT = 75;
 
     private TermuxBridge() {}
 
@@ -125,6 +127,20 @@ public final class TermuxBridge {
         prefs(context).edit().putBoolean("bridge_verified", false).commit();
     }
 
+    /**
+     * Takes over the request id of a setup that was already running, so progress,
+     * completion and failure all correlate again. An install the user started in
+     * Termux, or one left behind by a killed activity, is still their install.
+     */
+    public static synchronized boolean adoptExternalOperation(Context context, String requestId) {
+        SharedPreferences prefs = prefs(context);
+        if (!prefs.getBoolean("follow_external", false)) return false;
+        if (requestId == null || requestId.isEmpty()) return false;
+        prefs.edit().putString("request_id", requestId).putBoolean("follow_external", false)
+                .putBoolean("running", true).commit();
+        return true;
+    }
+
     public static boolean hasRuntime(Context context) {
         return prefs(context).getBoolean("runtime_installed", false);
     }
@@ -184,7 +200,7 @@ public final class TermuxBridge {
                 .putLong("finished_at", 0);
         // A fresh check must not inherit the verdict of the previous one.
         if (PROBE_ACTION.equals(action)) started.putBoolean("bridge_verified", false);
-        started.commit();
+        started.putBoolean("follow_external", false).commit();
         if (!isInstalled(app)) {
             fail(app, "Install and open Termux first, then return here.", "");
             return false;
@@ -256,6 +272,16 @@ public final class TermuxBridge {
         String output = TermuxCommandBuilder.safeOutput(result.getString("stdout", "")
                 + "\n" + result.getString("stderr", "") + "\n" + error, statusToken(context)).trim();
         boolean success = internalError == Activity.RESULT_OK && exitCode == 0;
+        // The installer's lock exits 75 when another setup already owns it. That is
+        // a healthy run in progress, not a failure, and reporting it as one told
+        // users their working install had broken. Follow that operation instead.
+        if (internalError == Activity.RESULT_OK && exitCode == LOCK_BUSY_EXIT) {
+            prefs(context).edit().putBoolean("running", true).putBoolean("success", false)
+                    .putBoolean("follow_external", true).putString("output", output)
+                    .putString("message", "Setup is already running in Termux. Following its progress.")
+                    .commit();
+            return;
+        }
         if (!success) {
             String message = "Termux could not finish. Check the details below and retry; completed steps are kept.";
             String lower = (error + "\n" + output).toLowerCase(Locale.ROOT);
@@ -284,6 +310,9 @@ public final class TermuxBridge {
             finished.putString("message", "Termux is connected.");
             // A check proves only the link; an editor may survive from an earlier run.
             if (output.contains("editor installed")) finished.putBoolean("runtime_installed", true);
+            // Ground truth for notebooks. Setup treats a failed notebook step as a
+            // warning and still succeeds, so completion is not evidence they landed.
+            finished.putBoolean("notebooks_installed", output.contains("tool jupyter"));
         } else {
             finished.putBoolean("runtime_installed", true).putString("message", "Your workspace is ready");
         }

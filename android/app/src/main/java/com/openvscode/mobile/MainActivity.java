@@ -188,18 +188,23 @@ public class MainActivity extends AppCompatActivity {
                 smallButton("Open Termux app info", () -> openAppSettings("com.termux"));
                 break;
             case "install":
-                title.setText(prefs.getBoolean("core_installed", false) ? "Welcome back." : "Make room for ideas.");
-                subtitle.setText(prefs.getBoolean("core_installed", false)
+                boolean installed = prefs.getBoolean("core_installed", false);
+                title.setText(installed ? "Welcome back." : "Make room for ideas.");
+                subtitle.setText(installed
                     ? "Start your local editor and pick up where you left off. Your projects stay in Termux."
                     : "We’ll install the editor, Python and a C++ compiler. Your projects live on your phone.");
-                if (!prefs.getBoolean("core_installed", false)) {
+                if (!installed) {
                     CheckBox check = new CheckBox(this); check.setText("Also install Jupyter notebooks (takes longer)");
                     check.setTextColor(TEXT); check.setTextSize(14); check.setChecked(notebooks);
                     check.setOnCheckedChangeListener((v, checked) -> notebooks = checked); detail.addView(check);
                     note("Keep Termux running during setup. If a download stops, retrying keeps completed work and your files.");
                 }
-                action(prefs.getBoolean("core_installed", false) ? "Start editor" : "Install my workspace",
-                    () -> runRuntime(!prefs.getBoolean("core_installed", false)));
+                action(installed ? "Start editor" : "Install my workspace", () -> runRuntime(!installed));
+                // Notebooks used to be offered only before the first install, so
+                // anyone who skipped them had no way to add them afterwards.
+                if (installed && !prefs.getBoolean("notebooks_installed", false)) {
+                    smallButton("Add Jupyter notebooks", () -> { notebooks = true; runRuntime(true); });
+                }
                 break;
             case "installing":
                 title.setText(task.action.equals("start") ? "Waking your workspace." : "Your workspace is\ntaking shape.");
@@ -215,6 +220,11 @@ public class MainActivity extends AppCompatActivity {
                 note("Your files: ~/OpenVScode_Workspace\nUse the editor’s Terminal menu to run Python, compile C++, or install more tools.");
                 action("Open editor", () -> connect(DEFAULT_SERVER_URL));
                 secondary("View setup details", this::showLogs);
+                // The install screen is unreachable once the editor answers, so the
+                // one chance to add notebooks has to live here too.
+                if (!prefs.getBoolean("notebooks_installed", false)) {
+                    smallButton("Add Jupyter notebooks", () -> { notebooks = true; runRuntime(true); });
+                }
                 footnote.setText("Local workspace · Available offline after setup");
                 break;
             default:
@@ -250,7 +260,9 @@ public class MainActivity extends AppCompatActivity {
     private void runRuntime(boolean install) {
         if (TermuxBridge.readState(this).running) { render(true); return; }
         generation++; localReady = false; runtimeStatus = null; notice = "";
-        prefs.edit().putString("mode", "local").putBoolean("setup_started", true).apply();
+        SharedPreferences.Editor request = prefs.edit().putString("mode", "local").putBoolean("setup_started", true);
+        if (install && notebooks) request.putBoolean("notebooks_requested", true);
+        request.apply();
         if (install) TermuxBridge.install(this, notebooks); else TermuxBridge.start(this);
         render(true); checkRuntime();
     }
@@ -276,12 +288,26 @@ public class MainActivity extends AppCompatActivity {
                 checking = false;
                 if (isDestroyed() || checkGeneration != generation) return;
                 runtimeStatus = result;
+                // A setup running under another request id is still the user's setup.
+                if (result != null && TermuxBridge.adoptExternalOperation(this, result.optString("requestId"))) {
+                    render(true);
+                }
                 if (result != null) {
                     JSONArray lines = result.optJSONArray("logTail");
                     if (lines != null) { StringBuilder b = new StringBuilder(); for (int i=0; i<lines.length(); i++) b.append(lines.optString(i)).append('\n'); logs = b.toString(); }
                 }
                 localReady = healthy;
-                if (healthy && TermuxBridge.recordReady(this, before.requestId)) prefs.edit().putBoolean("core_installed", true).apply();
+                if (healthy && TermuxBridge.recordReady(this, before.requestId)) {
+                    prefs.edit().putBoolean("core_installed", true).apply();
+                    // Whether notebooks actually landed is Termux's to answer: the
+                    // notebook step can warn and be skipped while setup still
+                    // succeeds, and assuming success would hide the way to retry.
+                    if (prefs.getBoolean("notebooks_requested", false)) {
+                        prefs.edit().putBoolean("notebooks_requested", false).apply();
+                        startProbe();
+                        return;
+                    }
+                }
                 if (result != null && before.requestId.equals(result.optString("requestId")) && "error".equals(result.optString("state")))
                     TermuxBridge.recordFailure(this, before.requestId, result.optString("message"), logs);
                 render(false);
@@ -339,10 +365,13 @@ public class MainActivity extends AppCompatActivity {
     private void openIntent(Intent intent) { try { startActivity(intent); } catch (Exception e) { toast("This setting is unavailable on this device."); } }
     private void showHelp() {
         new AlertDialog.Builder(this).setTitle("A little help")
-            .setItems(new String[]{"Installation log", "Termux battery settings", "OpenVScode permissions", "How setup works"}, (d,which) -> {
+            .setItems(new String[]{"Installation log", "Check the Termux link", "Termux battery settings",
+                    "OpenVScode permissions", "How setup works"}, (d,which) -> {
                 if (which == 0) showLogs();
-                else if (which == 1) openAppSettings("com.termux");
-                else if (which == 2) openAppSettings(getPackageName());
+                // Reachable at any time: the check also reports what Termux has.
+                else if (which == 1) startProbe();
+                else if (which == 2) openAppSettings("com.termux");
+                else if (which == 3) openAppSettings(getPackageName());
                 else new AlertDialog.Builder(this).setTitle("Your workspace, on your phone")
                     .setMessage("Termux runs code-server, Python and C++. OpenVScode displays the editor.\n\nKeep Termux running. If Android stops it, use Start editor to reconnect. Setting Termux battery use to Unrestricted can help.\n\nProjects: ~/OpenVScode_Workspace\nLogs: ~/.local/state/openvscode\n\nTermux’s external-app setting allows apps you grant its Run command permission to run shell commands. Grant this only to apps you trust.")
                     .setPositiveButton("Got it",null).show();
@@ -353,8 +382,12 @@ public class MainActivity extends AppCompatActivity {
         String diagnostic = "OpenVScode " + BuildConfig.VERSION_NAME + " · Android " + Build.VERSION.RELEASE
             + "\nTermux installed: " + TermuxBridge.isInstalled(this) + "\nTermux automatable: " + TermuxBridge.canRunCommands(this)
             + "\nCommand permission: " + TermuxBridge.hasRunPermission(this) + "\nLink verified: " + TermuxBridge.isBridgeVerified(this)
-            + "\n" + task.message + "\n\n" + (logs.isEmpty() ? task.output : logs);
-        if (logs.isEmpty() && task.output.isEmpty()) diagnostic += "\nWaiting for log output. You can also view ~/.local/state/openvscode/install.log in Termux.";
+            + "\n" + task.message;
+        // Both halves matter: Termux's own reply to the last command, and the
+        // installer's log. Showing only the log hid what the link check reported.
+        if (!task.output.isEmpty()) diagnostic += "\n\n--- Termux reply to the last command ---\n" + task.output;
+        if (!logs.isEmpty()) diagnostic += "\n\n--- installation log ---\n" + logs;
+        if (logs.isEmpty() && task.output.isEmpty()) diagnostic += "\n\nWaiting for log output. You can also view ~/.local/state/openvscode/install.log in Termux.";
         final String report = diagnostic.replace(TermuxBridge.statusToken(this),"[redacted]");
         TextView text = new TextView(this); text.setText(report); text.setTextIsSelectable(true); text.setTypeface(Typeface.MONOSPACE);
         text.setTextSize(12); text.setPadding(dp(20),dp(12),dp(20),dp(12));
