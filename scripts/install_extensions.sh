@@ -51,7 +51,17 @@ for extension in "${extensions[@]}"; do
     # The marketplace fails intermittently on a phone connection, and a lost
     # download here means no language server after an otherwise good install.
     # One retry converts most of those into a success.
-    if timeout 90 code-server --install-extension "$extension"; then continue; fi
+    if attempt="$(timeout 90 code-server --install-extension "$extension" 2>&1)"; then
+        printf '%s\n' "$attempt"
+        continue
+    fi
+    printf '%s\n' "$attempt"
+    # Some extensions ship no build this code-server can run. That is permanent:
+    # retrying burns two minutes and "try again later" is misleading advice.
+    if grep -qiE 'not available in code-server|is not compatible|no compatible version' <<< "$attempt"; then
+        printf 'This code-server build cannot run %s, so editor support for it is unavailable. Compiling and running still work from the terminal.\n' "$extension" >&2
+        continue
+    fi
     printf 'Retrying %s once.\n' "$extension"
     if timeout 120 code-server --install-extension "$extension"; then continue; fi
     printf 'Could not add %s. Retry from the editor Extensions panel later.\n' "$extension" >&2
