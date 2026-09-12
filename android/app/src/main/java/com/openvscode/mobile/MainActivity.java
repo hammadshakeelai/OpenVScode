@@ -39,7 +39,7 @@ public class MainActivity extends AppCompatActivity {
     private ValueCallback<Uri[]> fileCallback;
     private boolean foreground, checking, localReady, editorVisible, loadingPage, pageFailed;
     private boolean ctrl, alt, notebooks, connectionError;
-    private int generation;
+    private int generation, editorMisses;
     private String screen = "", notice = "", logs = "", taskSignature = "", serverUrl = DEFAULT_SERVER_URL;
     private JSONObject runtimeStatus;
     private final Runnable poll = new Runnable() {
@@ -47,6 +47,34 @@ public class MainActivity extends AppCompatActivity {
             if (!foreground) return;
             checkRuntime();
             handler.postDelayed(this, 2500);
+        }
+    };
+    /**
+     * The status poll stands down while the editor is on screen, so nothing used
+     * to notice a server that died underneath it: code-server shows its own
+     * "attempting to reconnect" dialog, which waits forever for a process that is
+     * gone. Watch the local editor's health and hand the user back to setup.
+     */
+    private final Runnable editorWatch = new Runnable() {
+        @Override public void run() {
+            if (!foreground || !editorVisible || !isMatchingServer(serverUrl, DEFAULT_SERVER_URL)) return;
+            network.execute(() -> {
+                boolean alive;
+                try { fetch(DEFAULT_SERVER_URL + "/healthz", null, 1500); alive = true; }
+                catch (Exception ignored) { alive = false; }
+                boolean answered = alive;
+                handler.post(() -> {
+                    if (isDestroyed() || !editorVisible) return;
+                    editorMisses = answered ? 0 : editorMisses + 1;
+                    // Three misses, not one: a busy phone can drop a single probe.
+                    if (editorMisses >= 3) {
+                        editorMisses = 0;
+                        connectionFailed("The editor stopped in Termux. Start it again to pick up where you left off.");
+                        return;
+                    }
+                    handler.postDelayed(editorWatch, 5000);
+                });
+            });
         }
     };
     private final ActivityResultLauncher<String> permission = registerForActivityResult(
@@ -98,9 +126,10 @@ public class MainActivity extends AppCompatActivity {
     }
     @Override protected void onStart() {
         super.onStart(); foreground = true; render(true); handler.post(poll);
+        if (editorVisible) { editorMisses = 0; handler.postDelayed(editorWatch, 5000); }
     }
     @Override protected void onStop() {
-        foreground = false; handler.removeCallbacks(poll); super.onStop();
+        foreground = false; handler.removeCallbacks(poll); handler.removeCallbacks(editorWatch); super.onStop();
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         out.putBoolean("editorVisible", editorVisible); out.putString("editorUrl", serverUrl);
@@ -449,6 +478,7 @@ public class MainActivity extends AppCompatActivity {
                 if (pageFailed || !loadingPage || "about:blank".equals(url)) return;
                 loadingPage = false; editorVisible = true; setup.setVisibility(View.GONE); editor.setVisibility(View.VISIBLE);
                 ((TextView)findViewById(R.id.editorLabel)).setText(isMatchingServer(serverUrl,DEFAULT_SERVER_URL) ? "OpenVScode · Local" : "OpenVScode · Connected");
+                editorMisses = 0; handler.removeCallbacks(editorWatch); handler.postDelayed(editorWatch, 5000);
                 if (foreground) {
                     if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(MainActivity.this,Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
                         && !prefs.getBoolean("notifications_asked",false)) {
@@ -477,6 +507,7 @@ public class MainActivity extends AppCompatActivity {
     }
     private void connect(String url) {
         generation++; serverUrl = url; pageFailed = false; connectionError = false; loadingPage = true; editorVisible = false;
+        editorMisses = 0; handler.removeCallbacks(editorWatch);
         editor.setVisibility(View.VISIBLE); setup.setVisibility(View.VISIBLE);
         title.setText("Opening your editor."); subtitle.setText("Connecting to your workspace…");
         steps.removeAllViews(); detail.removeAllViews(); progress.setVisibility(View.VISIBLE); progress.setIndeterminate(true);
@@ -488,10 +519,17 @@ public class MainActivity extends AppCompatActivity {
     }
     private void connectionFailed(String message) {
         pageFailed = true; loadingPage = false; editorVisible = false; connectionError = true;
+        handler.removeCallbacks(editorWatch);
         setup.setVisibility(View.VISIBLE); editor.setVisibility(View.GONE); screen="connection_error";
         title.setText("Connection interrupted."); subtitle.setText(message); detail.removeAllViews(); steps.removeAllViews();
         progress.setVisibility(View.GONE); caption.setVisibility(View.GONE);
-        action("Reconnect", () -> connect(serverUrl));
+        // A local editor that has stopped cannot be reconnected to, only started.
+        if (isMatchingServer(serverUrl, DEFAULT_SERVER_URL) && TermuxBridge.canRunCommands(this)
+                && TermuxBridge.hasRunPermission(this)) {
+            action("Start the editor again", () -> { connectionError = false; localReady = false; runRuntime(false); });
+        } else {
+            action("Reconnect", () -> connect(serverUrl));
+        }
         secondary("Back to setup", () -> { prefs.edit().putString("mode","local").apply(); localReady=false; notice=""; connectionError=false; render(true); });
     }
     private void showSession() {
