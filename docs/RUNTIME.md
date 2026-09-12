@@ -26,6 +26,21 @@ manually without `--status-token` reuse the stored token, or generate one if abs
 interactive prompts. Shared Android storage access is optional and is requested
 separately by the app rather than blocking installation.
 
+## Link check
+
+Before any download, the app sends a short check instead of trusting that setup was
+done: a few `printf` lines reporting the request id, CPU, free space and whether an
+editor is already installed. Termux must run it and echo `openvscode-bridge-ok`; a
+zero exit code alone is not accepted as proof, because Termux reports success for
+commands it declined to run. The check stages no files and answers in about a
+second, so a missing permission or an unset `allow-external-apps` surfaces before
+the user waits through a package installation.
+
+The bridge needs a Termux build that ships `com.termux.app.RunCommandService` and
+declares `com.termux.permission.RUN_COMMAND` — the F-Droid or GitHub build. The
+Google Play build has neither, and the app detects this before requesting a
+permission Android would refuse.
+
 `install.sh` and `start.sh` return zero only after `/healthz` identifies a running
 code-server. Both commands use the same operation lock, reject duplicate work with
 exit 75. Kernel file locks release automatically after interruption or reboot.

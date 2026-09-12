@@ -40,7 +40,7 @@ public class MainActivity extends AppCompatActivity {
     private boolean foreground, checking, localReady, editorVisible, loadingPage, pageFailed;
     private boolean ctrl, alt, notebooks, connectionError;
     private int generation;
-    private String screen = "", notice = "", logs = "", serverUrl = DEFAULT_SERVER_URL;
+    private String screen = "", notice = "", logs = "", taskSignature = "", serverUrl = DEFAULT_SERVER_URL;
     private JSONObject runtimeStatus;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -51,7 +51,10 @@ public class MainActivity extends AppCompatActivity {
     };
     private final ActivityResultLauncher<String> permission = registerForActivityResult(
         new ActivityResultContracts.RequestPermission(), granted -> {
-            notice = granted ? "" : "Android has not granted access. Enable it in App permissions.";
+            // Prove the link immediately: a granted permission alone does not mean
+            // Termux will accept commands.
+            if (granted) { notice = ""; startProbe(); return; }
+            notice = "Android has not granted access. Enable “Run commands in Termux” under App permissions.";
             render(true);
         });
     private final ActivityResultLauncher<String> notifications = registerForActivityResult(
@@ -89,7 +92,8 @@ public class MainActivity extends AppCompatActivity {
         render(true);
         if (state != null && state.getBoolean("editorVisible")) connect(state.getString("editorUrl", DEFAULT_SERVER_URL));
         else if ("remote".equals(prefs.getString("mode", "local"))) connect(prefs.getString("server_url", DEFAULT_SERVER_URL));
-        else if (prefs.getBoolean("core_installed", false) && TermuxBridge.hasRunPermission(this)
+        else if (prefs.getBoolean("core_installed", false) && TermuxBridge.canRunCommands(this)
+                && TermuxBridge.hasRunPermission(this) && TermuxBridge.isBridgeVerified(this)
                 && !TermuxBridge.readState(this).running) runRuntime(false);
     }
     @Override protected void onStart() {
@@ -112,10 +116,15 @@ public class MainActivity extends AppCompatActivity {
     private void render(boolean force) {
         if (prefs == null || editorVisible || loadingPage || connectionError) return;
         TermuxBridge.State task = TermuxBridge.readState(this);
+        // Repaint whenever Termux reports something new, even within one screen.
+        String signature = task.requestId + task.running + task.success + task.message;
+        if (!signature.equals(taskSignature)) { taskSignature = signature; force = true; }
+        boolean checkingLink = task.running && TermuxBridge.PROBE_ACTION.equals(task.action);
         String next;
         if (!prefs.getBoolean("setup_started", false)) next = "welcome";
         else if (!TermuxBridge.isInstalled(this)) next = "termux";
-        else if (!prefs.getBoolean("bridge_configured", false) || !TermuxBridge.hasRunPermission(this)) next = "link";
+        else if (!TermuxBridge.canRunCommands(this)) next = "termux_build";
+        else if (checkingLink || !TermuxBridge.hasRunPermission(this) || !TermuxBridge.isBridgeVerified(this)) next = "link";
         else if (task.running) next = "installing";
         else if (localReady) next = "ready";
         else if (!task.success && !task.action.isEmpty()) next = "error";
@@ -126,7 +135,7 @@ public class MainActivity extends AppCompatActivity {
         primary.setEnabled(true); remote.setEnabled(!task.running);
         progress.setVisibility(View.GONE); caption.setVisibility(View.GONE);
         footnote.setText("One-time setup · No root needed");
-        int current = next.equals("welcome") || next.equals("termux") ? 0 : next.equals("link") ? 1 : next.equals("ready") ? 3 : 2;
+        int current = next.equals("welcome") || next.startsWith("termux") ? 0 : next.equals("link") ? 1 : next.equals("ready") ? 3 : 2;
         buildSteps(current);
         switch (next) {
             case "welcome":
@@ -148,19 +157,35 @@ public class MainActivity extends AppCompatActivity {
             case "link":
                 title.setText("Connect the two apps.");
                 subtitle.setText("One small step in Termux lets OpenVScode install and start your editor for you.");
-                note("1. Copy the command below.\n2. Open Termux, paste it, and press Enter.\n3. Return here and allow access.");
+                note("1. Copy the line below.\n2. Open Termux, paste it, and press Enter.\n3. Come back and tap Check the link.");
                 TextView command = note(TermuxBridge.enableExternalAppsCommand());
                 command.setTypeface(Typeface.MONOSPACE); command.setTextSize(11); command.setTextIsSelectable(true);
-                action("Copy command & open Termux", () -> {
-                    copy("Termux setup", TermuxBridge.enableExternalAppsCommand());
-                    if (!TermuxBridge.openTermux(this)) toast("Open Termux from your app drawer.");
-                });
-                secondary("I’ve run it · Allow access", () -> {
-                    prefs.edit().putBoolean("bridge_configured", true).apply(); notice = "";
-                    if (!TermuxBridge.hasRunPermission(this)) permission.launch(TermuxBridge.RUN_PERMISSION);
-                    else render(true);
-                });
+                if (checkingLink) {
+                    progress.setVisibility(View.VISIBLE); progress.setIndeterminate(true);
+                    caption.setVisibility(View.VISIBLE); caption.setText("Running a one-second test command in Termux…");
+                    primary.setEnabled(false); action("Checking the link…", () -> {});
+                } else {
+                    action("Copy line & open Termux", () -> {
+                        copy("Termux setup", TermuxBridge.enableExternalAppsCommand());
+                        if (!TermuxBridge.openTermux(this)) toast("Open Termux from your app drawer.");
+                    });
+                    secondary("I’ve run it · Check the link", () -> {
+                        notice = "";
+                        if (!TermuxBridge.hasRunPermission(this)) permission.launch(TermuxBridge.RUN_PERMISSION);
+                        else startProbe();
+                    });
+                }
+                // The check reports exactly why Termux refused, instead of failing later.
+                if (!task.success && !task.message.isEmpty() && TermuxBridge.PROBE_ACTION.equals(task.action)) note(task.message);
                 if (!notice.isEmpty()) smallButton("Open Android app permissions", () -> openAppSettings(getPackageName()));
+                break;
+            case "termux_build":
+                title.setText("This Termux can’t\nbe automated.");
+                subtitle.setText("The Play Store build of Termux has no command bridge, so no app can set it up for you.");
+                note("Install Termux from F-Droid or GitHub instead. Uninstalling the Play Store build deletes its files, so copy anything you need out of it first.");
+                action("Get Termux from F-Droid", () -> openUrl("https://f-droid.org/en/packages/com.termux/"));
+                secondary("I’ve switched builds", () -> render(true));
+                smallButton("Open Termux app info", () -> openAppSettings("com.termux"));
                 break;
             case "install":
                 title.setText(prefs.getBoolean("core_installed", false) ? "Welcome back." : "Make room for ideas.");
@@ -198,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
                 note("Check the log for the failed step. Keep Termux open and your internet connected, then retry.");
                 action("Retry setup", () -> runRuntime(!prefs.getBoolean("core_installed", false)));
                 secondary("View installation log", this::showLogs);
-                smallButton("Reconnect Termux", () -> { prefs.edit().putBoolean("bridge_configured", false).apply(); notice = ""; render(true); });
+                smallButton("Reconnect Termux", () -> { TermuxBridge.forgetVerification(this); notice = ""; render(true); });
         }
         if (!notice.isEmpty()) note(notice);
         updateProgress(task);
@@ -216,6 +241,11 @@ public class MainActivity extends AppCompatActivity {
             message = runtimeStatus.optString("message", message);
         }
         caption.setText(message + "\n" + elapsed / 60 + "m " + elapsed % 60 + "s elapsed");
+    }
+    /** One second of certainty before a download the user has to wait through. */
+    private void startProbe() {
+        if (TermuxBridge.readState(this).running) { render(true); return; }
+        notice = ""; TermuxBridge.probe(this); render(true);
     }
     private void runRuntime(boolean install) {
         if (TermuxBridge.readState(this).running) { render(true); return; }
@@ -321,7 +351,8 @@ public class MainActivity extends AppCompatActivity {
     private void showLogs() {
         TermuxBridge.State task = TermuxBridge.readState(this);
         String diagnostic = "OpenVScode " + BuildConfig.VERSION_NAME + " · Android " + Build.VERSION.RELEASE
-            + "\nTermux installed: " + TermuxBridge.isInstalled(this) + "\nCommand permission: " + TermuxBridge.hasRunPermission(this)
+            + "\nTermux installed: " + TermuxBridge.isInstalled(this) + "\nTermux automatable: " + TermuxBridge.canRunCommands(this)
+            + "\nCommand permission: " + TermuxBridge.hasRunPermission(this) + "\nLink verified: " + TermuxBridge.isBridgeVerified(this)
             + "\n" + task.message + "\n\n" + (logs.isEmpty() ? task.output : logs);
         if (logs.isEmpty() && task.output.isEmpty()) diagnostic += "\nWaiting for log output. You can also view ~/.local/state/openvscode/install.log in Termux.";
         final String report = diagnostic.replace(TermuxBridge.statusToken(this),"[redacted]");

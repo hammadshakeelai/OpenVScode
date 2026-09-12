@@ -10,6 +10,8 @@ final class TermuxCommandBuilder {
     // Android parcels strings as UTF-16. Leave ample room below Binder's shared limit.
     static final int MAX_SCRIPT_BYTES = 120 * 1024;
     static final int MAX_OUTPUT_CHARS = 12000;
+    /** Printed by the probe script; its presence proves Termux ran our command. */
+    static final String PROBE_MARKER = "openvscode-bridge-ok";
 
     private TermuxCommandBuilder() {}
 
@@ -26,9 +28,7 @@ final class TermuxCommandBuilder {
         if (token == null || !token.matches("[a-f0-9]{64}")) {
             throw new IllegalArgumentException("Invalid status token");
         }
-        if (requestId == null || !requestId.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")) {
-            throw new IllegalArgumentException("Invalid runtime request ID");
-        }
+        requireRequestId(requestId);
         String[] requiredFiles = {"install.sh", "start.sh", "setup.sh", "scripts/runtime.sh",
                 "scripts/status_server.py", "scripts/install_toolchain.sh",
                 "scripts/install_extensions.sh", "scripts/install_jupyter_kernels.sh"};
@@ -77,6 +77,26 @@ final class TermuxCommandBuilder {
                 .append("exit \"$result\"\n");
         ensureBounded(script);
         return script.toString();
+    }
+
+    /**
+     * A one-second round trip that proves the whole bridge before a long download:
+     * Termux accepted the command, allow-external-apps is set, and bash answers.
+     */
+    static String buildProbe(String requestId) {
+        requireRequestId(requestId);
+        return "printf 'request %s\\n' '" + requestId + "'\n"
+                + "printf 'arch %s\\n' \"$(uname -m)\"\n"
+                + "printf 'free-kb %s\\n' \"$(df -Pk \"$HOME\" 2>/dev/null | awk 'NR == 2 { print $4 }')\"\n"
+                + "command -v code-server >/dev/null 2>&1 && printf 'editor installed\\n'\n"
+                + "printf '%s\\n' '" + PROBE_MARKER + "'\n";
+    }
+
+    private static void requireRequestId(String requestId) {
+        if (requestId == null || !requestId.matches(
+                "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")) {
+            throw new IllegalArgumentException("Invalid runtime request ID");
+        }
     }
 
     static void validateAssetPath(String path) {

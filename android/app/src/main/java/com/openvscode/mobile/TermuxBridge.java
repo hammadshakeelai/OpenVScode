@@ -34,6 +34,8 @@ public final class TermuxBridge {
     private static final String PREFS_NAME = "openvscode_termux";
     private static final String RESULT_ACTION = "com.openvscode.mobile.TERMUX_RESULT";
     private static final String PREFIX = "com.termux.RUN_COMMAND_";
+    private static final String RUN_COMMAND_SERVICE = "com.termux.app.RunCommandService";
+    static final String PROBE_ACTION = "probe";
 
     private TermuxBridge() {}
 
@@ -41,6 +43,22 @@ public final class TermuxBridge {
         try {
             ApplicationInfo app = context.getPackageManager().getApplicationInfo(TERMUX_PACKAGE, 0);
             return app.enabled;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The Google Play build of Termux ships without RunCommandService and never
+     * declares the permission, so no app can drive it. Detect that here instead
+     * of asking Android for a permission it will silently refuse.
+     */
+    public static boolean canRunCommands(Context context) {
+        PackageManager packages = context.getPackageManager();
+        try {
+            packages.getPermissionInfo(RUN_PERMISSION, 0);
+            packages.getServiceInfo(new ComponentName(TERMUX_PACKAGE, RUN_COMMAND_SERVICE), 0);
+            return true;
         } catch (PackageManager.NameNotFoundException e) {
             return false;
         }
@@ -91,6 +109,20 @@ public final class TermuxBridge {
 
     public static boolean start(Context context) {
         return dispatch(context, "start", false);
+    }
+
+    /** Verifies the link in about a second, before a download the user must wait for. */
+    public static boolean probe(Context context) {
+        return dispatch(context, PROBE_ACTION, false);
+    }
+
+    public static boolean isBridgeVerified(Context context) {
+        return prefs(context).getBoolean("bridge_verified", false);
+    }
+
+    /** Sends the user back through the link check after Termux is reinstalled or reset. */
+    public static void forgetVerification(Context context) {
+        prefs(context).edit().putBoolean("bridge_verified", false).commit();
     }
 
     public static boolean hasRuntime(Context context) {
@@ -144,13 +176,15 @@ public final class TermuxBridge {
         Context app = context.getApplicationContext();
         if (readState(app).running) return false;
         String requestId = UUID.randomUUID().toString();
-        prefs(app).edit().putString("request_id", requestId).putString("action", action)
+        SharedPreferences.Editor started = prefs(app).edit()
+                .putString("request_id", requestId).putString("action", action)
                 .putBoolean("running", true).putBoolean("success", false)
-                .putString("message", "install".equals(action)
-                        ? "Preparing the tools in Termux. The first download can take a few minutes."
-                        : "Starting your workspace in Termux…")
+                .putString("message", messageFor(action))
                 .putString("output", "").putLong("started_at", System.currentTimeMillis())
-                .putLong("finished_at", 0).commit();
+                .putLong("finished_at", 0);
+        // A fresh check must not inherit the verdict of the previous one.
+        if (PROBE_ACTION.equals(action)) started.putBoolean("bridge_verified", false);
+        started.commit();
         if (!isInstalled(app)) {
             fail(app, "Install and open Termux first, then return here.", "");
             return false;
@@ -161,9 +195,14 @@ public final class TermuxBridge {
         }
         PendingIntent callback = null;
         try {
-            Map<String, byte[]> assets = new LinkedHashMap<>();
-            readAssets(app.getAssets(), "runtime", "", assets, new int[]{0});
-            String command = TermuxCommandBuilder.build(assets, action, statusToken(app), notebooks, requestId);
+            String command;
+            if (PROBE_ACTION.equals(action)) {
+                command = TermuxCommandBuilder.buildProbe(requestId);
+            } else {
+                Map<String, byte[]> assets = new LinkedHashMap<>();
+                readAssets(app.getAssets(), "runtime", "", assets, new int[]{0});
+                command = TermuxCommandBuilder.build(assets, action, statusToken(app), notebooks, requestId);
+            }
             Intent resultIntent = new Intent(app, TermuxResultReceiver.class)
                     .setAction(RESULT_ACTION)
                     .setData(Uri.parse("openvscode://termux-result/" + requestId));
@@ -172,15 +211,14 @@ public final class TermuxBridge {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
             callback = PendingIntent.getBroadcast(app, 0, resultIntent, flags);
             Intent commandIntent = new Intent("com.termux.RUN_COMMAND")
-                    .setComponent(new ComponentName(TERMUX_PACKAGE, "com.termux.app.RunCommandService"))
+                    .setComponent(new ComponentName(TERMUX_PACKAGE, RUN_COMMAND_SERVICE))
                     .putExtra(PREFIX + "PATH", "/data/data/com.termux/files/usr/bin/bash")
                     .putExtra(PREFIX + "ARGUMENTS", new String[]{"-s"})
                     .putExtra(PREFIX + "STDIN", command)
                     .putExtra(PREFIX + "WORKDIR", "/data/data/com.termux/files/home")
                     .putExtra(PREFIX + "BACKGROUND", true)
                     .putExtra(PREFIX + "BACKGROUND_CUSTOM_LOG_LEVEL", "off")
-                    .putExtra(PREFIX + "COMMAND_LABEL", "install".equals(action)
-                            ? "Set up OpenVScode" : "Start OpenVScode")
+                    .putExtra(PREFIX + "COMMAND_LABEL", labelFor(action))
                     .putExtra(PREFIX + "COMMAND_DESCRIPTION", "Runs the runtime bundled with your OpenVScode APK.")
                     .putExtra(PREFIX + "PENDING_INTENT", callback);
             ComponentName service = app.startService(commandIntent);
@@ -231,9 +269,38 @@ public final class TermuxBridge {
             fail(context, message, output + "\nExit code: " + exitCode);
             return;
         }
-        prefs(context).edit().putBoolean("running", false).putBoolean("success", true)
-                .putBoolean("runtime_installed", true).putString("message", "Your workspace is ready")
-                .putString("output", output).putLong("finished_at", System.currentTimeMillis()).commit();
+        boolean probed = PROBE_ACTION.equals(state.action);
+        // Termux reports success for a command it never ran when its own setup is
+        // incomplete, so the marker — not the exit code alone — proves the link.
+        if (probed && !output.contains(TermuxCommandBuilder.PROBE_MARKER)) {
+            fail(context, "Termux did not run the command. Finish the one-time setup line in Termux, then try again.", output);
+            return;
+        }
+        SharedPreferences.Editor finished = prefs(context).edit()
+                .putBoolean("running", false).putBoolean("success", true)
+                .putBoolean("bridge_verified", true).putString("output", output)
+                .putLong("finished_at", System.currentTimeMillis());
+        if (probed) {
+            finished.putString("message", "Termux is connected.");
+            // A check proves only the link; an editor may survive from an earlier run.
+            if (output.contains("editor installed")) finished.putBoolean("runtime_installed", true);
+        } else {
+            finished.putBoolean("runtime_installed", true).putString("message", "Your workspace is ready");
+        }
+        finished.commit();
+    }
+
+    private static String messageFor(String action) {
+        if (PROBE_ACTION.equals(action)) return "Checking the link to Termux…";
+        if ("install".equals(action)) {
+            return "Preparing the tools in Termux. The first download can take a few minutes.";
+        }
+        return "Starting your workspace in Termux…";
+    }
+
+    private static String labelFor(String action) {
+        if (PROBE_ACTION.equals(action)) return "Check the OpenVScode link";
+        return "install".equals(action) ? "Set up OpenVScode" : "Start OpenVScode";
     }
 
     private static void fail(Context context, String message, String output) {

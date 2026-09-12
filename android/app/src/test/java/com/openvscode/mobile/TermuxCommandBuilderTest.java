@@ -55,6 +55,38 @@ public class TermuxCommandBuilderTest {
                 () -> TermuxCommandBuilder.build(assets(), "install", TOKEN, false, "'; id; #"));
     }
 
+    @Test public void probeChecksTheLinkWithoutStagingTheRuntime() {
+        String requestId = "ab0b8d43-8a13-4017-a6c2-477c4709e3f9";
+        String probe = TermuxCommandBuilder.buildProbe(requestId);
+        assertTrue(probe.contains(TermuxCommandBuilder.PROBE_MARKER));
+        assertFalse("A link check must not carry the installer with it", probe.contains("base64 -d"));
+        assertThrows(IllegalArgumentException.class, () -> TermuxCommandBuilder.buildProbe("'; id; #"));
+    }
+
+    @Test public void actualBashAnswersTheProbeWithItsMarker() throws Exception {
+        File bash = new File("/bin/bash");
+        if (!bash.isFile()) bash = new File("C:/Program Files/Git/bin/bash.exe");
+        assumeTrue("Bash is needed for the probe integration test", bash.isFile());
+        String requestId = "ab0b8d43-8a13-4017-a6c2-477c4709e3f9";
+        ProcessBuilder processBuilder = new ProcessBuilder(bash.getAbsolutePath(), "-s");
+        processBuilder.environment().put("HOME",
+                temporary.newFolder("probe-home").getAbsolutePath().replace('\\', '/'));
+        processBuilder.redirectErrorStream(true);
+        Process process = processBuilder.start();
+        try {
+            process.getOutputStream().write(
+                    TermuxCommandBuilder.buildProbe(requestId).getBytes(StandardCharsets.UTF_8));
+            process.getOutputStream().close();
+            assertTrue("The link check must answer quickly", process.waitFor(15, TimeUnit.SECONDS));
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertEquals(output, 0, process.exitValue());
+            assertTrue(output, output.contains(TermuxCommandBuilder.PROBE_MARKER));
+            assertTrue(output, output.contains("request " + requestId));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
     @Test public void rejectsTraversalAndShellSyntaxInPaths() {
         for (String path : new String[]{"../install.sh", "/tmp/a", "a/../b", "a/./b", "a//b", "a';id", "a$(id)", "a\\b"}) {
             Map<String, byte[]> files = assets();

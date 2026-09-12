@@ -23,21 +23,15 @@
 ## 📲 Install the APK (straight from your phone)
 
 > [!IMPORTANT]
-> **Read this before you tap.** The APK is the Android *shell* — a WebView, a
-> foreground service and the touch keybar. It does not contain an IDE; it connects
-> to one. There are three ways to give it something to connect to, and only the
-> first is fully proven end to end:
+> **The APK is the shell; Termux is the engine.** The app carries the installer and
+> runs it for you. You install Termux once, tap through four steps, and the app
+> installs code-server, Python and a C++ compiler inside Termux and opens the editor
+> on `127.0.0.1:8080`. You can also point the app at a code-server you already run
+> somewhere else.
 >
-> 1. **Point it at a server you already run.** Type any address — a laptop on the
->    same Wi‑Fi, a hostname, a public URL — or let it scan your network. This works
->    today.
-> 2. **Set it up through Termux** (one tap, needs Termux installed). The scripts are
->    written and the app drives them itself, but they have **not yet been run on a
->    real device**.
-> 3. **Install the IDE image directly** (no Termux). Downloads and unpacks a full
->    Linux environment with Python, C++ and Jupyter — but **cannot launch it yet**.
->    The piece that runs binaries out of that image is still being built. Tapping
->    this today gets you a correctly-installed image and no IDE.
+> **Termux must be the F-Droid or GitHub build.** The Google Play build ships without
+> the `RUN_COMMAND` service, so no app can drive it. The setup screen detects that
+> build and says so instead of failing later.
 
 **On the phone, tap this link:**
 
@@ -96,24 +90,21 @@ It expects the IDE server described below to be reachable on `127.0.0.1:8080`.
 
 ---
 
-## ⚡ Alternative: run it under Termux
+## ⚡ The same setup, by hand
 
 > [!NOTE]
-> **These scripts are written but untested on a device.** `setup.sh`, `start.sh` and
-> everything under `scripts/` now install the toolchain, code-server, and the Jupyter
-> kernels, and every step is idempotent so a failed run can simply be repeated. They
-> were developed on Windows against a Termux/aarch64 target with no way to run them,
-> so treat the first run as the real test and please
-> [report what breaks](https://github.com/hammadshakeelai/OpenVScode/issues).
->
-> You can also skip the commands entirely: install the APK, and tap
-> **Set up Python, C++ & Jupyter automatically** — the app runs all of this for you
-> through Termux.
+> **You do not need any of this if you use the app** — it stages these same scripts
+> inside Termux and runs them for you, showing live progress. This section is the
+> manual path: useful for a headless phone, for scripting, or for reading exactly
+> what the app is about to do. Every step is idempotent, so a failed run can simply
+> be repeated. Please [report what breaks](https://github.com/hammadshakeelai/OpenVScode/issues).
 
 ### Step 1 — Install Termux
 
-Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/).
-The Google Play build is abandoned and will not work.
+Get **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/) or the
+[GitHub releases](https://github.com/termux/termux-app/releases). The Google Play
+build is a separate, restricted app: it has no `RUN_COMMAND` service, so the OpenVScode
+app cannot drive it.
 
 ### Step 2 — Paste one line
 
