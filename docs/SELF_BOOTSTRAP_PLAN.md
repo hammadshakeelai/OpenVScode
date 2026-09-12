@@ -238,9 +238,11 @@ The right combination is **targetSdk 28 + proot + a glibc rootfs**. This is what
 UserLAnd and Andronix do, and these measurements explain why they all do it that
 way rather than something lighter.
 
-`libexechook.so` is kept in the tree: it is correct, tested, and is what makes a
-*bionic* rootfs viable at a modern targetSdk. It is simply not the tool for a
-Debian rootfs.
+`libexechook.so` was correct and tested, and is what makes a *bionic* rootfs
+viable at a modern targetSdk. It is simply not the tool for a Debian rootfs, and
+the project went to Termux instead, so it no longer ships: the shim, the rootfs
+installer and the image tooling were removed once Termux became the runtime. Git
+history keeps them, at `android/app/src/main/cpp/` and `tools/rootfs/`.
 
 ### 7.4 The open decision
 

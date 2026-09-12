@@ -204,9 +204,7 @@ OpenVScode/
 │   └── mobile-keyboard-bar.js       # On-screen touch coding keyboard bar
 ├── test-harness/                    # Browser simulator for the keybar: phone viewport,
 │                                    # virtual-keyboard resize, key injection, test suite
-├── tools/rootfs/                    # Dockerfile for the downloadable Linux image
 ├── .github/workflows/android.yml    # CI: builds the APK, attaches it to releases
-├── .github/workflows/rootfs.yml     # CI: builds the rootfs image per architecture
 └── docs/
     ├── assets/banner.svg            # README banner
     ├── SELF_BOOTSTRAP_PLAN.md       # Running a Linux rootfs on Android: measurements + plan

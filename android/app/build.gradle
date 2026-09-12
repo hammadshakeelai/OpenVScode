@@ -16,21 +16,6 @@ android {
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // Only the ABIs we actually target: real phones are arm64, the test
-        // emulator is x86_64. Building the others just inflates the APK.
-        ndk {
-            abiFilters += ["arm64-v8a", "x86_64"]
-        }
-    }
-
-    // The shim must exist as a real file in the native library directory, not
-    // be loaded straight from the APK — that directory is the only location an
-    // app is permitted to execute from.
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging = true
-        }
     }
 
     buildTypes {
@@ -75,10 +60,5 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.webkit:webkit:1.10.0")
 
-    // Rootfs extraction. commons-compress reads the tar (symlinks, long names,
-    // PAX headers — a Debian rootfs has all three); tukaani provides the xz
-    // decoder, which the JDK does not ship. Together ~1.1 MB of APK.
-    implementation("org.apache.commons:commons-compress:1.27.1")
-    implementation("org.tukaani:xz:1.10")
     testImplementation("junit:junit:4.13.2")
 }

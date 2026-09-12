@@ -82,6 +82,11 @@ public class TermuxCommandBuilderTest {
             assertEquals(output, 0, process.exitValue());
             assertTrue(output, output.contains(TermuxCommandBuilder.PROBE_MARKER));
             assertTrue(output, output.contains("request " + requestId));
+            // The nested quoting has to survive Java, an intent extra and stdin;
+            // an empty field would silently cost the check its diagnostic value.
+            assertTrue(output, output.matches("(?s).*\\narch \\S+\\n.*"));
+            assertTrue("free space must report a number: " + output,
+                    output.matches("(?s).*\\nfree-kb \\d+\\n.*"));
         } finally {
             process.destroyForcibly();
         }
