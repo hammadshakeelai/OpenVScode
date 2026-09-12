@@ -394,13 +394,17 @@ public class MainActivity extends AppCompatActivity {
     private void openIntent(Intent intent) { try { startActivity(intent); } catch (Exception e) { toast("This setting is unavailable on this device."); } }
     private void showHelp() {
         new AlertDialog.Builder(this).setTitle("A little help")
-            .setItems(new String[]{"Installation log", "Check the Termux link", "Termux battery settings",
-                    "OpenVScode permissions", "How setup works"}, (d,which) -> {
+            .setItems(new String[]{"Installation log", "Check the Termux link", "Repair or update my workspace",
+                    "Termux battery settings", "OpenVScode permissions", "How setup works"}, (d,which) -> {
                 if (which == 0) showLogs();
                 // Reachable at any time: the check also reports what Termux has.
                 else if (which == 1) startProbe();
-                else if (which == 2) openAppSettings("com.termux");
-                else if (which == 3) openAppSettings(getPackageName());
+                // Setup is idempotent, and once everything looks installed nothing
+                // else re-runs it: new examples, new defaults and a repaired
+                // toolchain could never reach a device that set up earlier.
+                else if (which == 2) runRuntime(true);
+                else if (which == 3) openAppSettings("com.termux");
+                else if (which == 4) openAppSettings(getPackageName());
                 else new AlertDialog.Builder(this).setTitle("Your workspace, on your phone")
                     .setMessage("Termux runs code-server, Python and C++. OpenVScode displays the editor.\n\nKeep Termux running. If Android stops it, use Start editor to reconnect. Setting Termux battery use to Unrestricted can help.\n\nProjects: ~/OpenVScode_Workspace\nLogs: ~/.local/state/openvscode\n\nTermux’s external-app setting allows apps you grant its Run command permission to run shell commands. Grant this only to apps you trust.")
                     .setPositiveButton("Got it",null).show();

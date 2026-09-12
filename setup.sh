@@ -19,8 +19,17 @@ fi
 code-server --version || ov_fail "The editor package cannot start. Retry setup; if it persists, run pkg upgrade in Termux."
 ov_stage installing workspace 78 "Preparing your workspace and mobile editor defaults."
 mkdir -p "$OPENVSCODE_WORKSPACE"
-if [[ -d "$RUNTIME_DIR/examples" && ! -e "$OPENVSCODE_WORKSPACE/examples" ]]; then
-    cp -R "$RUNTIME_DIR/examples" "$OPENVSCODE_WORKSPACE/examples"
+# Add each missing example project on its own. Copying the tree only when no
+# examples directory existed meant anyone who installed earlier never received
+# examples added later — the notebook samples never arrived on such a device.
+# A project the user already has is left exactly as it is, edits included.
+if [[ -d "$RUNTIME_DIR/examples" ]]; then
+    mkdir -p "$OPENVSCODE_WORKSPACE/examples"
+    for project in "$RUNTIME_DIR/examples"/*; do
+        [[ -e "$project" ]] || continue
+        target="$OPENVSCODE_WORKSPACE/examples/$(basename -- "$project")"
+        [[ -e "$target" ]] || cp -R -- "$project" "$target"
+    done
 fi
 bash "$RUNTIME_DIR/scripts/install_extensions.sh" --settings-only
 ov_stage installing extensions 85 "Adding Python and C++ editor support. These downloads are optional."

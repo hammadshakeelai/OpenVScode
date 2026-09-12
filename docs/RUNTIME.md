@@ -124,7 +124,10 @@ The app's bridge captures its own bounded command transcript separately.
   build. Notebook setup then counts the registered kernels and fails at zero: a
   kernelspec listing exits zero even when it lists nothing.
 - Existing user settings, keybindings, code-server configuration and example
-  projects are retained. Mobile defaults and examples are copied only if absent.
+  projects are retained. Mobile defaults are copied only if absent, and each
+  example project is added individually when it is missing — copying the tree
+  only when no `examples` directory existed meant a device that installed
+  earlier never received examples added later, such as the notebook samples.
   An existing `settings.json` additionally receives only the default keys it does
   not already set, backed up once as `settings.json.openvscode.bak`; a value the
   user chose is never replaced, and a file that is not plain JSON is left alone.
