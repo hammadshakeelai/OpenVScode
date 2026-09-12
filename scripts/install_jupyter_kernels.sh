@@ -16,7 +16,12 @@ if ! python -c 'import psutil' >/dev/null 2>&1; then
         -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 python-psutil \
         || printf 'Termux has no psutil package for this device; continuing.\n' >&2
 fi
-if ! timeout 900 python -m pip install --retries 2 ipykernel; then
+# A kernel alone is not enough. The editor's Jupyter extension cannot use ZMQ
+# kernels under code-server — the zeromq native module has no Android build — so
+# it starts a Jupyter server instead and refuses to execute a cell without one:
+# "Install 'jupyter and notebook' into the Python environment". Installing only
+# ipykernel produced notebooks that opened and then could not run a single cell.
+if ! timeout 1800 python -m pip install --retries 2 ipykernel jupyter-server notebook; then
     printf 'Notebook dependencies could not be installed. Python, C++ and the editor remain ready.\n' >&2
     exit 1
 fi
@@ -29,6 +34,13 @@ if [[ "${kernels:-0}" -lt 1 ]]; then
     exit 1
 fi
 printf 'Registered %s notebook kernel(s).\n' "$kernels"
+# Cells reach the kernel through a server, so a registered kernel is not proof
+# that anything can run. Check what the extension itself requires.
+if ! python -c 'import ipykernel, jupyter_server' >/dev/null 2>&1; then
+    printf 'The notebook server is missing, so cells would not execute. Python, C++ and the editor are unaffected.\n' >&2
+    exit 1
+fi
+printf 'Notebook server ready; cells can execute.\n'
 timeout 90 code-server --install-extension ms-toolsai.jupyter || {
     printf 'Add the Jupyter extension from the editor when your connection is available.\n' >&2
     exit 1

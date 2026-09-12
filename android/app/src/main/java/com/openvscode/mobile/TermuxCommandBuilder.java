@@ -91,9 +91,14 @@ final class TermuxCommandBuilder {
                 + "command -v code-server >/dev/null 2>&1 && printf 'editor installed\\n'\n"
                 // Diagnostics can then name what Termux actually has, instead of the
                 // app guessing from a setting like clangd.path.
-                + "for tool in python clang++ clangd code-server jupyter; do\n"
+                + "for tool in python clang++ clangd code-server; do\n"
                 + "  command -v \"$tool\" >/dev/null 2>&1 && printf 'tool %s\\n' \"$tool\"\n"
                 + "done\n"
+                // Notebooks need a server the editor's Jupyter extension can talk
+                // to, not just the CLI. The jupyter binary was present on a device
+                // whose notebooks could not execute a single cell, because
+                // jupyter_server was missing and code-server cannot use ZMQ kernels.
+                + "python -c 'import ipykernel, jupyter_server' >/dev/null 2>&1 && printf 'tool jupyter\\n'\n"
                 + "printf '%s\\n' '" + PROBE_MARKER + "'\n";
     }
 

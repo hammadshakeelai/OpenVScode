@@ -62,6 +62,8 @@ public class TermuxCommandBuilderTest {
         assertFalse("A link check must not carry the installer with it", probe.contains("base64 -d"));
         assertTrue("The check should report which tools Termux already has",
                 probe.contains("printf 'tool %s\\n'"));
+        assertTrue("Notebooks count as present only with a server the editor can use",
+                probe.contains("import ipykernel, jupyter_server"));
         assertThrows(IllegalArgumentException.class, () -> TermuxCommandBuilder.buildProbe("'; id; #"));
     }
 
