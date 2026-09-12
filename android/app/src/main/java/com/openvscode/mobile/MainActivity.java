@@ -202,7 +202,7 @@ public class MainActivity extends AppCompatActivity {
                 action(installed ? "Start editor" : "Install my workspace", () -> runRuntime(!installed));
                 // Notebooks used to be offered only before the first install, so
                 // anyone who skipped them had no way to add them afterwards.
-                if (installed && !prefs.getBoolean("notebooks_installed", false)) {
+                if (installed && !TermuxBridge.hasNotebooks(this)) {
                     smallButton("Add Jupyter notebooks", () -> { notebooks = true; runRuntime(true); });
                 }
                 break;
@@ -222,7 +222,7 @@ public class MainActivity extends AppCompatActivity {
                 secondary("View setup details", this::showLogs);
                 // The install screen is unreachable once the editor answers, so the
                 // one chance to add notebooks has to live here too.
-                if (!prefs.getBoolean("notebooks_installed", false)) {
+                if (!TermuxBridge.hasNotebooks(this)) {
                     smallButton("Add Jupyter notebooks", () -> { notebooks = true; runRuntime(true); });
                 }
                 footnote.setText("Local workspace · Available offline after setup");

@@ -122,6 +122,16 @@ public final class TermuxBridge {
         return prefs(context).getBoolean("bridge_verified", false);
     }
 
+    /**
+     * Answered by the last link check, which asks Termux directly. This lives in
+     * the bridge's own preferences, so it has to be read through here: the
+     * Activity's file is a different one, and reading the key there always said
+     * "no notebooks" however many the device actually had.
+     */
+    public static boolean hasNotebooks(Context context) {
+        return prefs(context).getBoolean("notebooks_installed", false);
+    }
+
     /** Sends the user back through the link check after Termux is reinstalled or reset. */
     public static void forgetVerification(Context context) {
         prefs(context).edit().putBoolean("bridge_verified", false).commit();
